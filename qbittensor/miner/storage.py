@@ -78,10 +78,7 @@ class Storage:  # pylint: disable=too-few-public-methods
         for cid, bitstring in self._solved.items():
             if len(output) >= max_count:
                 break
-            
-            # skip if we’ve already handed it out
-            if cid in self._sent:
-                continue
+
             # skip if caller asked for a specific validator and this CID belongs to another
             if validator_hotkey and self._challenge_validators.get(cid) != validator_hotkey:
                 bt.logging.info("sol for different val, skipping")
