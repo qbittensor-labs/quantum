@@ -1,3 +1,8 @@
+import logging
+logging.getLogger("torch.autograd").setLevel(logging.ERROR)
+import torch
+torch.autograd.set_detect_anomaly(False) # global
+
 import asyncio
 
 import bittensor as bt
