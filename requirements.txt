@@ -1,0 +1,17 @@
+cotengra==0.7.5
+matplotlib
+numpy>=2.0.1,<2.1.0
+optuna==4.4.0
+pydantic==2.11.7
+pytest>=8.0.0
+qiskit==1.4.3
+qiskit-aer-gpu==0.15.1
+quimb>=1.11.0
+rich==14.0.0
+scipy>=1.11.0
+setuptools>=70.0.0
+sympy>=1.12.0
+torch>=2.4.0
+torch_optimizer>=0.3.0
+tqdm>=4.66.0
+expecttest>=0.2.1
