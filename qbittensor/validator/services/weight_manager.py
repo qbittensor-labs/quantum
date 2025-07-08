@@ -77,8 +77,7 @@ class WeightManager:
                     uids=self.validator.metagraph.uids,
                     weights=weights,
                     wait_for_inclusion=True,
-                    wait_for_finalization=False,
-                    max_retries=0,
+                    wait_for_finalization=False
                 )
 
                 if result[0]:
