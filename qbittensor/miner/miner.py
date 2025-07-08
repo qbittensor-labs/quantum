@@ -17,6 +17,9 @@ from qbittensor.miner.services.certificate_verifier import CertificateVerifier
 # bootstrap singletons
 _BASE_DIR = Path(__file__).resolve().parent
 
+for subdir in ("solved_circuits", "unsolved_circuits"):
+    (_BASE_DIR / subdir).mkdir(parents=True, exist_ok=True)
+
 _verifier = CertificateVerifier()
 _solver = CircuitSolver(base_dir=_BASE_DIR)
 _assembler = SynapseAssembler()
