@@ -35,8 +35,9 @@ def _handle_challenge(syn: ChallengeCircuits) -> ChallengeCircuits:
             f"from {syn.validator_hotkey or '<?>'} in {save_to}"
         )
 
-    # hand back everything already solved
-    ready = _solver.drain(n=100)
+    # only give back solutions that belong to this validator
+    validator = getattr(syn, "validator_hotkey", None)
+    ready = _solver.drain(n=100, validator_hotkey=validator)
 
     # enqueue the new circuit for background solving
     _solver.submit(syn)
