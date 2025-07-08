@@ -1,18 +1,18 @@
 <div align="center">
 
-## qBittensor
+## qBitTensor
 
 </div>
 
 
 <img src="./quantum-subnet.png" />
 
-# qBittensor: Unlocking Practical Quantum Computing on Bittensor
+# qBitTensor: Unlocking Practical Quantum Computing on Bittensor
 
 Welcome to the Bittensor **Quantum Subnet**, an initiative engineered to accelerate the journey of quantum computing from the lab to practical, real-world application. We're building a decentralized network where innovation thrives, access is democratized, and some of the near-term challenges of quantum technology are systematically addressed through collaborative effort.
 
 ## Our Core Purpose
-qBittensor is fundamentally about advancing Quantum Computing beyond theoretical research to practical application. We believe the next breakthroughs will emerge from a nexus of diverse perspectives and shared computational power. Our mission is multifaceted:
+qBitTensor is fundamentally about advancing Quantum Computing beyond theoretical research to practical application. We believe the next breakthroughs will emerge from a nexus of diverse perspectives and shared computational power. Our mission is multifaceted:
 
 1. **Democratize Quantum Access:** Break down the barriers to entry, making quantum computation accessible to a wider audience, from researchers to startups.
 
@@ -140,7 +140,7 @@ We expect Miners to innovate quickly and will adjust this function accordingly. 
 
 
 ## Strategic Roadmap: Our Future Vision
-qBittensor is just getting started. Our strategic roadmap outlines a progression towards a fully decentralized, high-impact quantum platform:
+qBitTensor is just getting started. Our strategic roadmap outlines a progression towards a fully decentralized, high-impact quantum platform:
 
 - **More Circuit Types:** Once we've mastered Peaked Circuits, we will expand to include a wider array of verifiable quantum circuits. This will gradually broaden the scope of problems our network can tackle, building on our foundational understanding of verifiable computation.
 
