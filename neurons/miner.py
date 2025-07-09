@@ -23,7 +23,9 @@ class Miner(BaseMinerNeuron):
             self._last_sync_ts = now
             return True
         return False
-
+    def save_state(self):
+        """Silencing log spam, will implement soon"""
+        pass
     # main RPC handler
     async def forward(self, synapse: ChallengeCircuits) -> ChallengeCircuits:
         bt.logging.info(f"circuit received")

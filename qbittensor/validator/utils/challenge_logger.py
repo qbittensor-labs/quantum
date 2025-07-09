@@ -195,15 +195,17 @@ def log_solution(
         db.close()
 
 
-def log_certificate_as_solution(cert: "Certificate", miner_hotkey: str) -> None:
+def log_certificate_as_solution(cert: Certificate, miner_hotkey: str) -> bool:
     """
-    Persist a verified certificate into the *solutions* table.
-    Duplicate (same challenge_id) will be ignored automatically.
+    Insert the certificate into solutions
     """
-    db = DatabaseManager(_DB_PATH)
-    db.connect()
+    # direct sqlite3 so we can measure changes()
+    import sqlite3, datetime as _dt
+
+    conn = sqlite3.connect(_DB_PATH)
     try:
-        db.execute_query(
+        before = conn.total_changes # snapshot
+        conn.execute(
             _INSERT_CERT_AS_SOLUTION_SQL,
             (
                 cert.challenge_id,
@@ -211,7 +213,7 @@ def log_certificate_as_solution(cert: "Certificate", miner_hotkey: str) -> None:
                 cert.miner_uid,
                 miner_hotkey,
                 "<certificate>",
-                0.0,  # diff level not in cert
+                0.0,
                 cert.entanglement_entropy,
                 cert.nqubits,
                 cert.rqc_depth,
@@ -219,5 +221,8 @@ def log_certificate_as_solution(cert: "Certificate", miner_hotkey: str) -> None:
                 _dt.datetime.utcnow().isoformat(timespec="seconds"),
             ),
         )
+        conn.commit()
+        return (conn.total_changes - before) == 1
     finally:
-        db.close()
+        conn.close()
+

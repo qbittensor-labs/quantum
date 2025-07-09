@@ -89,18 +89,13 @@ class SolutionProcessor:
                 f"[solution-proc] log_solution failed for {sol.challenge_id[:10]}: {e}",
                 exc_info=True,
             )
-
-        bt.logging.info(
-            f"[solution-proc] {'✅' if is_correct else '❌'} "
-            f"{sol.challenge_id[:10]} from UID {uid}"
-        )
         return is_correct
 
     # private
     def _verify(self, cid: str, bitstring: str) -> bool:
         row = self._challenge_row(cid)
         if not row:
-            bt.logging.warning(f"[solution-proc] challenge {cid} not in DB")
+            bt.logging.trace(f"[solution-proc] challenge {cid} not in DB")
             return False
 
         expected_solution = None

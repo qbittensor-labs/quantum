@@ -28,7 +28,7 @@ from qbittensor.validator.utils.challenge_logger import (
 from qbittensor.common.certificate import Certificate
 
 # Constants
-RPC_DEADLINE = 20
+RPC_DEADLINE = 40
 HARD_TIMEOUT = RPC_DEADLINE + 10
 BATCH_SIZE = 8
 
@@ -93,19 +93,52 @@ async def _bootstrap(v: "Validator") -> None:
 
 
 async def forward(self: "Validator") -> None:
-    """Main entry‑point called by the bittensor runtime each block."""
+    """Main entry point called by the bittensor runtime each block."""
     if not hasattr(self, "challenge_producer"):
         await _bootstrap(self)
 
-    # dequeue a full batch of challenges
+    # Get next batch of UIDs in round-robin fashion
     items: list[QItem] = []
     uids: list[int] = []
-
-    for _ in range(BATCH_SIZE):
-        qitem = await self.challenge_producer.queue.get()
-        items.append(qitem)
-        uids.append(qitem.uid)
-        self.challenge_producer.queue.task_done()
+    
+    # Cycle through all miners
+    start_idx = getattr(self, '_batch_start_idx', 0)
+    total_uids = len(self._uid_list)
+    
+    for i in range(BATCH_SIZE):
+        uid_idx = (start_idx + i) % total_uids
+        uid = self._uid_list[uid_idx]
+        
+        if uid in self._in_flight: # Skip if already processing
+            continue
+            
+        # Get/create challenge for this specific UID
+        while True:
+            try:
+                qitem = await asyncio.wait_for(
+                    self.challenge_producer.queue.get(), timeout=1.0
+                )
+                if qitem.uid == uid: # Found challenge for our target UID
+                    items.append(qitem)
+                    uids.append(uid)
+                    self.challenge_producer.queue.task_done()
+                    break
+                else:
+                    # Put back and try again
+                    await self.challenge_producer.queue.put(qitem)
+                    await asyncio.sleep(0.01)
+            except asyncio.TimeoutError:
+                # No challenge ready for this UID, generate one directly
+                syn, meta, target, fp = await self.challenge_producer._make_payload(uid)
+                qitem = QItem(uid, syn, meta, target, fp)
+                items.append(qitem)
+                uids.append(uid)
+                break
+    
+    # Update start index for next batch
+    self._batch_start_idx = (start_idx + BATCH_SIZE) % total_uids
+    
+    # Mark UIDs as in-flight
     for uid in uids:
         self._in_flight.add(uid)
 
@@ -118,7 +151,7 @@ async def forward(self: "Validator") -> None:
     finally:
         for uid in uids:
             self._in_flight.discard(uid)
-        # refresh stake‑weights every block
+    
     await self._weight_mgr.update()
 
 
@@ -216,7 +249,11 @@ async def _handle_batch_miners(
         bt.logging.debug(f"[batch] got {type(resp).__name__} from {miner_hotkey}")
 
         # certificates must go before solutions
+        total     = 0 # how many the miner sent
+        inserted  = 0 # how many made it into the DB
+
         for raw in resp.certificates:
+            total += 1
             cert = raw if isinstance(raw, Certificate) else Certificate(**raw)
 
             if not cert.verify():
@@ -227,20 +264,34 @@ async def _handle_batch_miners(
                     f"[cert] hotkey {cert.validator_hotkey[:8]} not whitelisted"
                 )
                 continue
+
             try:
-                log_certificate_as_solution(cert, miner_hotkey)
-                bt.logging.info(
-                    f"[cert] ✅ stored {cert.challenge_id[:8]} from UID {uid}"
-                )
+                if log_certificate_as_solution(cert, miner_hotkey):
+                    inserted += 1 # only new rows
             except Exception as e:
                 bt.logging.error(f"[cert] DB insert failed: {e}", exc_info=True)
 
-        # solutions
-        for sol in SolutionExtractor.extract(resp):
-            v._sol_proc.process(
-                uid=uid, miner_hotkey=miner_hotkey, sol=sol, time_sent=t_sent
+        #  Always print one concise line
+        if total:
+            bt.logging.info(
+                f"[cert] received {total} certs, inserted {inserted}, "
+                f"skipped {total - inserted} (duplicates) from UID {uid}"
             )
-        bt.logging.debug(f"[cert] current whitelist = {v._whitelist}")
+        # solutions
+        stored = 0 
+        for sol in SolutionExtractor.extract(resp):
+            if v._sol_proc.process(
+                uid=uid,
+                miner_hotkey=miner_hotkey,
+                sol=sol,
+                time_sent=t_sent,
+            ):
+                stored += 1
+
+        if stored:
+            bt.logging.info(
+                f"[solution-proc] ✅ stored {stored} solution(s) from UID {uid}"
+            )
 
         # optional difficulty feedback
         desired: float | None = None
