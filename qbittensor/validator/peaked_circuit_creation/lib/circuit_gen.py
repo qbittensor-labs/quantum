@@ -124,7 +124,7 @@ opti = ctg.ReusableHyperOptimizer(
     progbar=False,
     methods=["greedy"],
     reconf_opts={},
-    max_repeats=36,
+    max_repeats=16, # Lowered repeats since method=greedy
     optlib="optuna",
 )
 
@@ -171,6 +171,7 @@ class TNModel(torch.nn.Module):
     def __init__(self, opt, const):
         super().__init__()
         self.const = const
+        self.step_count = 0
         params, self.skeleton = qtn.pack(opt)
         self.torch_params = torch.nn.ParameterDict(
             {
@@ -185,7 +186,15 @@ class TNModel(torch.nn.Module):
         params = {int(i): p for (i, p) in self.torch_params.items()}
         # reconstruct the TN with the new parameters
         psi = qtn.unpack(params, self.skeleton)
-        return loss_fn(self.const, norm_fn(psi))
+        
+        if self.step_count % 5 == 0:
+            psi = norm_fn(psi)
+            self.normalized = True
+        else:
+            self.normalized = False
+            
+        self.step_count += 1
+        return loss_fn(self.const, psi)
 
 
 def make_qmps(
@@ -295,12 +304,15 @@ def make_circuit(
     maxiters = 1000
     model = TNModel(opt, const)
     model()
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            action="ignore",
-            message=".*trace might not generalize.*",
-        )
-        model = torch.jit.trace_module(model, {"forward": list()})
+
+    # Disabled JIT, circuit gen actually runs faster for diff=0,1
+
+    # with warnings.catch_warnings():
+    #     warnings.filterwarnings(
+    #        action="ignore",
+    #        message=".*trace might not generalize.*",
+    #    )
+    #    model = torch.jit.trace_module(model, {"forward": list()})
     optimizer = optim.AdamW(model.parameters(), lr=0.001)
     pbar = tqdm.tqdm(range(maxiters), disable=True)
     for step in pbar:
@@ -314,7 +326,7 @@ def make_circuit(
             bt.logging.info(f"Circuit generation: Step {step}/{maxiters}, Current Loss: {loss:.6e}")
 
         # early stop if the peaking ratio is larger than the target
-        if -loss * 2**nqubits > target_peaking:
+        if model.normalized and -loss * 2**nqubits > target_peaking:
             print(f"\nEarly stop: peak is >{target_peaking:g}x uniform")
             break
 
