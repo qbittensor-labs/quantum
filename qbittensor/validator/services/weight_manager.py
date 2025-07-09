@@ -60,6 +60,10 @@ class WeightManager:
             scores = self.validator._scoring_mgr.calculate_decayed_scores(
                 lookback_days=2
             )
+            if not scores:
+                bt.logging.warning("No scores available for weight calculation")
+                self.last_weight_time = current_time
+                return
             weights = torch.zeros(len(self.validator.metagraph.uids))
             for uid_, score in scores.items():
                 if 0 <= uid_ < len(weights):
