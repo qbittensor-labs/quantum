@@ -207,6 +207,8 @@ async def _handle_batch_miners(
     if not axons:
         for fp in failed_fps:
             _cleanup_file(fp)
+        for fp in failed_fps:
+            _cleanup_file(fp)
         return
 
     # fire the RPCs
@@ -303,8 +305,14 @@ async def _handle_batch_miners(
                     desired = sol.desired_difficulty
                     break
         if desired is not None:
-            v._diff_cfg.set(uid, max(0.0, float(desired)))
-            bt.logging.info(f"[batch] UPDATED difficulty[{uid}] → {desired}")
+            allowed_max = v._sol_proc.allowed_max_difficulty(uid)
+            new_diff    = max(0.0, min(float(desired), allowed_max))
+
+            v._diff_cfg.set(uid, new_diff)
+            bt.logging.info(
+                f"[batch] UPDATED difficulty[{uid}] → {new_diff:.2f} "
+                f"(requested {desired:.2f}, allowed ≤ {allowed_max:.2f})"
+            )
 
         # housekeeping
         if ok_conn:

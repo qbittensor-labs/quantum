@@ -85,7 +85,7 @@ pm2 start --name your_process_name_here "python neurons/miner.py --wallet.name y
 
 Miners can configure their requested difficulty level by editing the `DESIRED_DIFFICULTY` constant in:
 ```
-qbittensor/miner/__init__.py
+neurons/miner.py
 ```
 
 ```python
@@ -96,6 +96,8 @@ The default miner will not be able to handle larger circuits than 32 qubits. It'
 **Difficulty Levels:**
 - `0`: Default difficulty
 - `1` and above: Progressively harder circuits
+
+Miners are only able to increase their difficulty in increments. You may go from 0.0 to 0.7, and then up in increments of 0.4 once proving you can solve larger and larger circuits.
 
 > **warning** The lowest difficulty already produces 31 qubit circuits. High difficulties will likely cause OOM errors, you must implement your own simulation stack to handle large qubit counts efficiently!
 

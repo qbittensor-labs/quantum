@@ -10,7 +10,7 @@ from qbittensor.protocol import ChallengeCircuits
 SYNC_INTERVAL_S = 300  # 5-minute metagraph sync, keeps logs tidy
 
 # Desired difficulty level for circuit challenges
-DESIRED_DIFFICULTY = -3.0  # Change this value to request different difficulty levels
+DESIRED_DIFFICULTY = 0.0  # Change this value to request different difficulty levels
 
 
 class Miner(BaseMinerNeuron):
