@@ -30,7 +30,7 @@ from qbittensor.common.certificate import Certificate
 # Constants
 RPC_DEADLINE = 40
 HARD_TIMEOUT = RPC_DEADLINE + 10
-BATCH_SIZE = 8
+BATCH_SIZE = 2
 
 CFG_DIR = Path(__file__).resolve().parent / "config"
 CFG_DIR.mkdir(exist_ok=True)
@@ -55,7 +55,12 @@ async def _bootstrap(v: "Validator") -> None:
     v._in_flight: set[int] = set()
 
     # metagraph helpers
-    uid_list = v.metagraph.uids.tolist()
+    raw_uids = v.metagraph.uids.tolist()
+    uid_list = [
+        uid for uid in raw_uids
+        if (v.metagraph.axons[uid].ip not in ("0.0.0.0", "", None))
+        and (v.metagraph.axons[uid].port != 0)
+    ]
 
     resume_uid = _read_last_uid()
     if resume_uid in uid_list:
