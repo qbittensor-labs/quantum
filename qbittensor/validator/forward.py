@@ -36,6 +36,19 @@ CFG_DIR = Path(__file__).resolve().parent / "config"
 CFG_DIR.mkdir(exist_ok=True)
 CFG_PATH = CFG_DIR / "difficulty.json"
 
+CURSOR_PATH = Path(__file__).resolve().parent / "last_uid.txt"
+
+def _read_last_uid() -> int | None:
+    try:
+        return int(CURSOR_PATH.read_text().strip())
+    except Exception:
+        return None
+
+def _write_last_uid(uid: int) -> None:
+    try:
+        CURSOR_PATH.write_text(str(uid))
+    except Exception as e:
+        bt.logging.warning(f"could not persist last UID: {e}")
 
 async def _bootstrap(v: "Validator") -> None:
     """Run once, lazily, the first time forward() is called."""
@@ -43,18 +56,33 @@ async def _bootstrap(v: "Validator") -> None:
 
     # metagraph helpers
     uid_list = v.metagraph.uids.tolist()
+
+    resume_uid = _read_last_uid()
+    if resume_uid in uid_list:
+        start_idx = uid_list.index(resume_uid) # resume exactly here
+        bt.logging.info(f"Resuming at UID {resume_uid}")
+    else:
+        start_idx = 0
+        bt.logging.info("No resume cursor found; starting at UID 0")
+
+    uid_list = uid_list[start_idx:] + uid_list[:start_idx]
+    v._uid_list  = uid_list
+    v._batch_start_idx = 0 # first element is the resume UID
+
     v._diff_cfg = DifficultyConfig(CFG_PATH, uids=uid_list)
     v._uid_list = uid_list
-    v._uid_cycle = itertools.cycle(uid_list)
 
     # challenge machinery
     v.certificate_issuer = CertificateIssuer(wallet=v.wallet)
+
+    start_idx = v._batch_start_idx # 0-based index of START_UID
+
     v.challenge_producer = ChallengeProducer(
         wallet=v.wallet,
         diff_cfg=v._diff_cfg,
         batch_size=BATCH_SIZE,
         queue_size=BATCH_SIZE,  # keeps on same pace as circuit gen
-        uid_list=uid_list,
+        uid_list=v._uid_list,
         validator=v,
     )
     v.challenge_producer.start()
@@ -102,7 +130,7 @@ async def forward(self: "Validator") -> None:
     uids: list[int] = []
     
     # Cycle through all miners
-    start_idx = getattr(self, '_batch_start_idx', 0)
+    start_idx = self._batch_start_idx
     total_uids = len(self._uid_list)
     
     for i in range(BATCH_SIZE):
@@ -153,6 +181,9 @@ async def forward(self: "Validator") -> None:
             self._in_flight.discard(uid)
     
     await self._weight_mgr.update()
+
+    if uids: # non-empty batch
+        _write_last_uid(uids[-1])
 
 
 async def _handle_batch_miners(
