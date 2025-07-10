@@ -97,7 +97,7 @@ class CertificateIssuer:
         if cert_files:
             sent_dir = _SENT / str(miner_uid)
             sent_dir.mkdir(exist_ok=True)
-            for f in cert_files:
-                shutil.move(str(f), sent_dir / f.name)
+            #for f in cert_files:
+            #    shutil.move(str(f), sent_dir / f.name)
 
         return certs
