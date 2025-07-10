@@ -88,9 +88,8 @@ class SynapseAssembler:
 
         if not ready:
             syn.solution_bitstring = ""
-        elif len(ready) == 1:
-            syn.solution_bitstring = ready[0][1]  # just the bit-string
         else:
+            # Always use batch format for consistency
             syn.solution_bitstring = json.dumps(
                 {
                     "type": "batch",
@@ -101,4 +100,8 @@ class SynapseAssembler:
                 },
                 separators=(",", ":"),
             )
+
+        bt.logging.info(
+            f"[assembler] sending solution payload: {syn.solution_bitstring}"
+        )
         return syn
