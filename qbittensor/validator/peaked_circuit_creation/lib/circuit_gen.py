@@ -1,38 +1,18 @@
+import warnings
 from dataclasses import dataclass
 
 import bittensor as bt
+import cotengra as ctg
 import numpy as np
+import quimb.tensor as qtn
 import torch
+import tqdm
 from torch import optim
 
-
-# Lazy imports to reduce initial memory footprint
-def _import_quimb():
-    """Lazy import quimb to reduce initial memory usage."""
-    import quimb.tensor as qtn
-
-    return qtn
-
-
-def _import_cotengra():
-    """Lazy import cotengra to reduce initial memory usage."""
-    import cotengra as ctg
-
-    return ctg
-
-
-def _import_tqdm():
-    """Lazy import tqdm to reduce initial memory usage."""
-    import tqdm
-
-    return tqdm
-
-
-# noqa: E402 - These are lazy imports after function definitions
-from qbittensor.validator.peaked_circuit_creation.lib.circuit import SU4, PeakedCircuit
-from qbittensor.validator.peaked_circuit_creation.peaked_circuits.functions import (
-    range_unitary,
-)
+from qbittensor.validator.peaked_circuit_creation.lib.circuit import (
+    SU4, PeakedCircuit)
+from qbittensor.validator.peaked_circuit_creation.peaked_circuits.functions import \
+    range_unitary
 
 
 @dataclass
@@ -140,7 +120,7 @@ class CircuitParams:
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"Using device: {DEVICE} (CUDA available: {torch.cuda.is_available()})")
 
-opti = _import_cotengra().ReusableHyperOptimizer(
+opti = ctg.ReusableHyperOptimizer(
     progbar=False,
     methods=["greedy"],
     reconf_opts={},
@@ -149,10 +129,7 @@ opti = _import_cotengra().ReusableHyperOptimizer(
 )
 
 
-def norm_fn(psi):
-    qtn = _import_quimb()
-    if not isinstance(psi, qtn.TensorNetwork):
-        raise TypeError("Expected quimb.tensor.TensorNetwork")
+def norm_fn(psi: qtn.TensorNetwork):
     """
     Normalize the tensors in a network in place so that they are physically
     correct (i.e. unitary and obey the usual Born/probability rules).
@@ -165,10 +142,10 @@ def norm_fn(psi):
     return psi.isometrize(method="cayley")
 
 
-def loss_fn(const, opt):
-    qtn = _import_quimb()
-    if not isinstance(const, qtn.TensorNetwork) or not isinstance(opt, qtn.TensorNetwork):
-        raise TypeError("Expected quimb.tensor.TensorNetwork for both arguments")
+def loss_fn(
+    const: qtn.TensorNetwork,
+    opt: qtn.TensorNetwork,
+) -> qtn.Tensor | torch.Tensor:
     """
     Compute the loss function for peaked circuit optimization.
 
@@ -194,7 +171,7 @@ class TNModel(torch.nn.Module):
     def __init__(self, opt, const):
         super().__init__()
         self.const = const
-        params, self.skeleton = _import_quimb().pack(opt)
+        params, self.skeleton = qtn.pack(opt)
         self.torch_params = torch.nn.ParameterDict(
             {
                 # torch requires strings as keys
@@ -207,7 +184,7 @@ class TNModel(torch.nn.Module):
         # convert back to original int key format
         params = {int(i): p for (i, p) in self.torch_params.items()}
         # reconstruct the TN with the new parameters
-        psi = _import_quimb().unpack(params, self.skeleton)
+        psi = qtn.unpack(params, self.skeleton)
         return loss_fn(self.const, norm_fn(psi))
 
 
@@ -216,7 +193,7 @@ def make_qmps(
     depth: int,
     start_layer: int,
     seed_val: int,
-):
+) -> qtn.TensorNetwork:
     """
     Construct a new tensor network corresponding to a matrix product state
     attached to a randomized brickwork circuit of depth `depth`. `start_layer`
@@ -240,17 +217,16 @@ def make_qmps(
             circuit, as a tensor network.
     """
     L = len(state)
-    psi = _import_quimb().MPS_computational_state(state)
+    psi = qtn.MPS_computational_state(state)
     for k in range(L):
         psi[k].modify(left_inds=[f"k{k}"], tags=[f"I{k}", "MPS"])
-    range_unitary(psi, 0, 0, list(), depth, L - 1, "float64", seed_val, L - 1, uni_list=None, rand=True, start_layer=start_layer)
+    range_unitary(
+        psi, 0, 0, list(), depth, L - 1, "float64", seed_val, L - 1, uni_list=None, rand=True, start_layer=start_layer
+    )
     return psi.astype_("complex128")
 
 
-def make_torch(tn):
-    qtn = _import_quimb()
-    if not isinstance(tn, qtn.TensorNetwork):
-        raise TypeError("Expected quimb.tensor.TensorNetwork")
+def make_torch(tn: qtn.TensorNetwork):
     """
     Convert all tensors in a network to complex torch tensors on `DEVICE`.
     """
@@ -263,7 +239,7 @@ def make_circuit(
     pqc_depth: int,
     seed: int,
     target_peaking: float = 1000.0,
-):
+) -> tuple[list[qtn.Tensor], list[qtn.Tensor], float]:
     """
     Construct a brickwork peaking circuit producing `target_state` as its peaked
     output.
@@ -313,16 +289,16 @@ def make_circuit(
     # state, and the randomized gates out into a network of "constants"
     const = init_rqc & target_pqc.tensors[:nqubits]
     # the rest are exactly the peaking gates, to be optimized below
-    opt = _import_quimb().TensorNetwork(target_pqc.tensors[nqubits:])
+    opt = qtn.TensorNetwork(target_pqc.tensors[nqubits:])
 
     # now do tensor network optimization to actually peak the target state
     maxiters = 1000
     model = TNModel(opt, const)
     model()
-
-    # JIT was turned of due to memory issues
+    
+    # Note: JIT tracing disabled to prevent memory issues
     optimizer = optim.AdamW(model.parameters(), lr=0.001)
-    pbar = _import_tqdm().tqdm(range(maxiters), disable=True)
+    pbar = tqdm.tqdm(range(maxiters), disable=True)
     for step in pbar:
         optimizer.zero_grad()
         loss = model()
@@ -343,8 +319,9 @@ def make_circuit(
     rqc_tensors = list(init_rqc.H.tensors[nqubits:])
     pqc_tensors = list(opt.tensors[::-1])
     target_weight = float(-loss_fn(const, opt))
+    
 
     opti.cleanup()
     bt.logging.debug("Cleared cotengra optimizer cache")
-
+    
     return (rqc_tensors, pqc_tensors, target_weight)
