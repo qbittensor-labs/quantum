@@ -11,7 +11,7 @@ from qbittensor.validator.forward import forward
 
 
 class Validator(BaseValidatorNeuron):
-    """Thin wrapper around BaseValidatorNeuron with a *synchronous* forward loop."""
+    """Thin wrapper around BaseValidatorNeuron with a synchronous forward loop."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -29,7 +29,7 @@ class Validator(BaseValidatorNeuron):
             bt.logging.error("Hotkey not registered, aborting")
             return
 
-        bt.logging.info("🚀 Validator starting (sync mode)")
+        bt.logging.info("Validator starting (sync mode)")
 
         try:
             while True:

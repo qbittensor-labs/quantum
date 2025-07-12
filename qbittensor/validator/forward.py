@@ -84,7 +84,6 @@ def _bootstrap(v: "Validator") -> None:
 def forward(self: "Validator") -> None:
     """
     Called by bittensor runtime once per block.
-    Does *one* thing: take the next ready challenge and handle it.
     """
     if not getattr(self, "_bootstrapped", False):
         _bootstrap(self)

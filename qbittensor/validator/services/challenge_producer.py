@@ -106,7 +106,7 @@ class ChallengeProducer:
                 syn, meta, target, fp = self._make_payload(uid)
                 self.queue.put_nowait(QItem(uid, syn, meta, target, fp))
                 bt.logging.debug("[challenge-producer] queued challenge")
-            except Exception:                              # pragma: no cover
+            except Exception:
                 bt.logging.error("[challenge-producer] error", exc_info=True)
 
             time.sleep(self._SLEEP)

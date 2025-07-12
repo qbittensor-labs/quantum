@@ -11,7 +11,7 @@ from qbittensor.validator.utils.challenge_logger import (
 )
 from qbittensor.common.certificate import Certificate
 
-RPC_DEADLINE = 10 # seconds
+RPC_DEADLINE = 10  # seconds
 
 
 class ResponseProcessor:
@@ -49,14 +49,14 @@ def _service_one_uid(
     # log challenge
     try:
         log_challenge(
-            challenge_id        = meta.challenge_id,
-            validator_hotkey    = meta.validator_hotkey,
-            miner_uid           = uid,
-            entanglement_entropy= meta.entanglement_entropy,
-            nqubits             = meta.nqubits,
-            rqc_depth           = meta.rqc_depth,
-            solution            = target_state,
-            time_sent           = t_sent,
+            challenge_id=meta.challenge_id,
+            validator_hotkey=meta.validator_hotkey,
+            miner_uid=uid,
+            entanglement_entropy=meta.entanglement_entropy,
+            nqubits=meta.nqubits,
+            rqc_depth=meta.rqc_depth,
+            solution=target_state,
+            time_sent=t_sent,
         )
     except Exception:
         bt.logging.error("[single] log_challenge failed", exc_info=True)
@@ -68,16 +68,16 @@ def _service_one_uid(
         bt.logging.warning(f"[single] UID {uid} has no axon")
         return
 
-    syn.solution_bitstring = None                    # hide the answer
+    syn.solution_bitstring = None  # hide the answer
     syn.attach_certificates(v.certificate_issuer.pop_for(uid))
 
     # blocking RPC
     try:
         resp_list: List[Any] = v.dendrite.query(
-            axons       = [axon],
-            synapse     = syn,
-            deserialize = True,
-            timeout     = RPC_DEADLINE,
+            axons=[axon],
+            synapse=syn,
+            deserialize=True,
+            timeout=RPC_DEADLINE,
         )
     except Exception as e:
         bt.logging.error(f"[single] dendrite error for UID {uid}: {e}")
@@ -101,7 +101,8 @@ def _service_one_uid(
             continue
         if cert.validator_hotkey not in v._whitelist:
             bt.logging.warning(
-                f"[cert] hotkey {cert.validator_hotkey[:8]} not whitelisted")
+                f"[cert] hotkey {cert.validator_hotkey[:8]} not whitelisted"
+            )
             continue
         try:
             if log_certificate_as_solution(cert, miner_hotkey):
@@ -139,7 +140,7 @@ def _service_one_uid(
 
     if desired is not None:
         allowed_max = v._sol_proc.allowed_max_difficulty(uid)
-        new_diff    = max(0.0, min(float(desired), allowed_max))
+        new_diff = max(0.0, min(float(desired), allowed_max))
         v._diff_cfg.set(uid, new_diff)
         bt.logging.info(
             f"[single] UPDATED diff[{uid}] → {new_diff:.2f} "
