@@ -92,6 +92,18 @@ def _bootstrap(v: "Validator") -> None:
 
     bt.logging.info("✅ validator bootstrap complete")
 
+def _refresh_uid_list(v: "Validator") -> None:
+    """Re-compute the list of live UIDs and hand it to the modules that use it."""
+    raw = v.metagraph.uids.tolist()
+    uid_list = [
+        u for u in raw
+        if v.metagraph.axons[u].ip not in ("0.0.0.0", "", None)
+        and v.metagraph.axons[u].port != 0
+    ]
+
+    # Update necessary services with uid list
+    v._diff_cfg.uids = uid_list
+    v._producer.uid_list = uid_list
 
 # Forward method
 def forward(self: "Validator") -> None:
@@ -105,6 +117,11 @@ def forward(self: "Validator") -> None:
         item = self._producer.queue.get_nowait() # non-blocking
     except queue.Empty:
         return
+    
+    self._iter = getattr(self, "_iter", 0) + 1
+    if self._iter % 5 == 0:
+        bt.logging.info("Refreshing metagraph...")
+        _refresh_uid_list(self)
 
     uid = item.uid
     miner_hotkey = self.metagraph.hotkeys[uid]
