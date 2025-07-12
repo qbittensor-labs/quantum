@@ -155,6 +155,7 @@ class ChallengeProducer:
         syn: ChallengeCircuits,
         target: str
     ) -> Path:
+        return # removing the writes entirely; currently unused
         fp = self._directory / f"{meta.challenge_id}.json"
         with fp.open("w") as f:
             json.dump(

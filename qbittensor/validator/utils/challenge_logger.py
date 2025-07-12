@@ -23,6 +23,7 @@ _CREATE_CHALLENGES_SQL = """
      challenge_id         TEXT UNIQUE,
      validator_hotkey     TEXT,
      miner_uid            INTEGER,
+     difficulty_level     REAL,
      entanglement_entropy REAL,
      nqubits              INTEGER,
      rqc_depth            INTEGER,
@@ -66,11 +67,12 @@ _INSERT_CHALLENGE_SQL = """
      challenge_id,
      validator_hotkey,
      miner_uid,
+     difficulty_level,
      entanglement_entropy,
      nqubits,
      rqc_depth,
      solution
- ) VALUES (?, ?, ?, ?, ?, ?, ?);
+ ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
  """
 
 _INSERT_SOLUTION_SQL = """
@@ -130,6 +132,7 @@ def log_challenge(
     challenge_id: str,
     validator_hotkey: str,
     miner_uid: int,
+    difficulty_level: float,
     entanglement_entropy: float,
     nqubits: int,
     rqc_depth: int,
@@ -145,6 +148,7 @@ def log_challenge(
                 challenge_id,
                 validator_hotkey,
                 miner_uid,
+                difficulty_level,
                 entanglement_entropy,
                 nqubits,
                 rqc_depth,

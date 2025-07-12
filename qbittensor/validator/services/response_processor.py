@@ -25,10 +25,10 @@ class ResponseProcessor:
         self.v = validator
 
     # public entry
-    def process(self, item: "ChallengeProducer.QItem") -> None:
+    def process(self, item: "ChallengeProducer.QItem", miner_hotkey: str) -> None:
         uid, syn, meta, target_state, _ = item
         bt.logging.info(f"[send] ▶️  UID {uid}   cid={meta.challenge_id[:10]}")
-        _service_one_uid(self.v, uid, syn, meta, target_state)
+        _service_one_uid(self.v, uid, syn, meta, target_state, miner_hotkey)
 
 
 # internal worker
@@ -38,6 +38,7 @@ def _service_one_uid(
     syn,
     meta,
     target_state: str,
+    miner_hotkey: str
 ) -> None:
     """
     Send syn to miner *uid* and handle the reply.
@@ -52,6 +53,7 @@ def _service_one_uid(
             challenge_id=meta.challenge_id,
             validator_hotkey=meta.validator_hotkey,
             miner_uid=uid,
+            difficulty_level = meta.difficulty,
             entanglement_entropy=meta.entanglement_entropy,
             nqubits=meta.nqubits,
             rqc_depth=meta.rqc_depth,
@@ -88,7 +90,6 @@ def _service_one_uid(
         return
 
     resp = resp_list[0]
-    miner_hotkey = getattr(resp.dendrite, "hotkey", "<unknown>")
 
     # certificates
     total = inserted = 0

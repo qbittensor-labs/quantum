@@ -12,6 +12,10 @@ class DifficultyConfig:
     """Thread-safe wrapper around <uid → difficulty> map stored as JSON.
     """
 
+    UNRESTRICTED_CEILING = 0.7 # can increase to 0.7 at any time
+    MAX_ABS_INCREASE   = 0.4 # max increase is 0.4 after 0.7
+    MIN_DIFFICULTY     = 0.0
+
     def __init__(
         self,
         path: Path,
@@ -30,11 +34,47 @@ class DifficultyConfig:
         with self._lock:
             return self._table.get(uid, self._default)
 
-    def set(self, uid: int, value: float) -> None:
+    def set(self, uid: int, value: float) -> bool:
+        """
+        Update a miners difficulty.
+        """
+        value = float(value)
+        if value < self.MIN_DIFFICULTY:
+            return False # Can't set a negative difficulty
+
         with self._lock:
-            self._table[uid] = float(value)
-            self._dump()
-            bt.logging.info(f"uid {uid} with diff {value}")
+            current = self._table.get(uid, self._default)
+            new_val  = current # default: unchanged
+
+            # downward moves are free
+            if value <= current:
+                new_val = value
+
+            # upward moves restrictions
+            else:
+                # Anything ≤ 0.7 is always allowed
+                if value <= self.UNRESTRICTED_CEILING:
+                    new_val = value
+
+                # We’re already past the ceiling
+                else:
+                    if current < self.UNRESTRICTED_CEILING:
+                        # Jump only as far as the ceiling
+                        new_val = self.UNRESTRICTED_CEILING
+                    else:
+                        # Clamp to current + 0.4
+                        allowed_max = current + self.MAX_ABS_INCREASE
+                        new_val = min(value, allowed_max)
+
+            # Commit if something changed
+            if new_val != current:
+                self._table[uid] = new_val
+                self._dump()
+                bt.logging.trace(f"uid {uid} difficulty now {new_val}")
+                return True
+
+            return False
+
 
     def _load(self) -> Dict[int, float]:
         """Load the table from disk, backfilling any missing UIDs."""

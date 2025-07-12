@@ -8,6 +8,9 @@ import datetime as dt
 from pathlib import Path
 from typing import Any, List
 
+# one time validator migration
+from .validator_migration import add_difficulty_to_challenges
+
 import bittensor as bt
 from qbittensor.validator.utils.challenge_utils import build_challenge
 from qbittensor.validator.config.difficulty_config import DifficultyConfig
@@ -59,6 +62,10 @@ def _bootstrap(v: "Validator") -> None:
     v.certificate_issuer = CertificateIssuer(wallet=v.wallet)
     dbdir = Path(__file__).parent / "database"; dbdir.mkdir(exist_ok=True)
     db    = dbdir / "validator_data.db"
+
+    # one time vali migration
+    add_difficulty_to_challenges(str(db))
+
     v._sol_proc    = SolutionProcessor(cert_issuer=v.certificate_issuer)
     v._scoring_mgr = ScoringManager(str(db))
     v._weight_mgr  = WeightManager(v)
@@ -94,11 +101,12 @@ def forward(self: "Validator") -> None:
         return
 
     uid = item.uid
+    miner_hotkey = self.metagraph.hotkeys[uid]
     if uid in self._in_flight: # re-entrancy guard
         return
     self._in_flight.add(uid)
     try:
-        self._resp_proc.process(item) # long work here
+        self._resp_proc.process(item, miner_hotkey = miner_hotkey)
     finally:
         self._in_flight.discard(uid)
         self._weight_mgr.update() # cheap
