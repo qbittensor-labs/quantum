@@ -133,7 +133,7 @@ activate your venv
 Start your validator using PM2:
 
 ```bash
-pm2 start --name your_process_name_here "python neurons/validator.py --wallet.name your_wallet_name --wallet.hotkey your_hotkey_name --netuid 63 --subtensor.network put_network_here --logging.debug --logging.info
+pm2 start --name your_process_name_here "python neurons/validator.py --wallet.name your_wallet_name --wallet.hotkey your_hotkey_name --netuid 63 --subtensor.network put_network_here --logging.debug
 ```
 
 ### Testnet Validator Setup
@@ -143,7 +143,7 @@ activate your venv
 For testing on the testnet:
 
 ```bash
-pm2 start --name your_process_name_here "python neurons/validator.py --wallet.name your_wallet_name --wallet.hotkey your_hotkey_name --netuid 380 --subtensor.network test --logging.debug --logging.info
+pm2 start --name your_process_name_here "python neurons/validator.py --wallet.name your_wallet_name --wallet.hotkey your_hotkey_name --netuid 380 --subtensor.network test --logging.debug
 
 ```
 
