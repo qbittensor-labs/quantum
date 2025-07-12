@@ -68,8 +68,10 @@ activate your venv
 Start your miner using PM2:
 
 ```bash
-pm2 start --name your_process_name_here "python neurons/miner.py --wallet.name your_wallet_name --wallet.hotkey your_hotkey_name --netuid 63 --subtensor.network put_network_here --axon.port 8091 --logging.trace
+pm2 start --name your_process_name_here "python neurons/miner.py --wallet.name your_wallet_name --wallet.hotkey your_hotkey_name --netuid 63 --subtensor.network put_network_here --axon.port 8091 --logging.trace --difficulty <float>
 ```
+
+Difficulty defaults to 0 if you do not pass it as an argument.
 
 ### Testnet Miner Setup
 
@@ -78,7 +80,7 @@ activate your venv
 For testing on the testnet:
 
 ```bash
-pm2 start --name your_process_name_here "python neurons/miner.py --wallet.name your_wallet_name --wallet.hotkey your_hotkey_name --netuid 380 --subtensor.network test--axon.port 8091 --logging.trace
+pm2 start --name your_process_name_here "python neurons/miner.py --wallet.name your_wallet_name --wallet.hotkey your_hotkey_name --netuid 380 --subtensor.network test--axon.port 8091 --logging.trace --difficulty <float>
 ```
 
 ### Configuring Miner Difficulty
