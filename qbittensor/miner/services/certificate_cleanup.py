@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Optional
-
+import json
+from datetime import datetime, timezone
 import bittensor as bt
 
 
@@ -13,13 +13,15 @@ class CertificateCleanup:
         cert_dir: Path,
         historical_dir: Path,
         archive_after_hours: int = 24,
-        delete_after_days: int = 7,
+        delete_after_days: int | None = 7,
         cleanup_interval_minutes: int = 5,
     ):
         self.cert_dir = cert_dir
         self.historical_dir = historical_dir
         self.archive_after_seconds = archive_after_hours * 3600
-        self.delete_after_seconds = delete_after_days * 24 * 3600
+        self.delete_after_seconds: int | None = (
+            None if delete_after_days is None else delete_after_days * 24 * 3600
+        )
         self.cleanup_interval_seconds = cleanup_interval_minutes * 60
         self._last_cleanup = 0.0
         self.historical_dir.mkdir(parents=True, exist_ok=True)
@@ -41,37 +43,37 @@ class CertificateCleanup:
             return
 
         now = time.time()
-        moved_count = 0
-        checked_count = 0
-        errors_count = 0
+        moved = checked = errs = 0
 
-        try:
-            for cert_file in self.cert_dir.glob("*.json"):
-                if checked_count >= max_files_per_run:
-                    break
+        for cert_file in self.cert_dir.glob("*.json"):
+            if checked >= max_files_per_run:
+                break
+            checked += 1
 
-                checked_count += 1
-
+            try:
+                # figure out the age
+                age_seconds: float
                 try:
-                    file_age = now - cert_file.stat().st_mtime
-                    if file_age > self.archive_after_seconds:
-                        historical_path = self.historical_dir / cert_file.name
-                        cert_file.rename(historical_path)
-                        moved_count += 1
-                except (PermissionError, OSError) as e:
-                    errors_count += 1
-                    bt.logging.debug(
-                        f"[cert-cleanup] Error moving {cert_file.name}: {e}"
-                    )
+                    data = json.loads(cert_file.read_text())
+                    ts_str = data.get("timestamp")
+                    ts = datetime.fromisoformat(ts_str).replace(tzinfo=timezone.utc)
+                    age_seconds = now - ts.timestamp()
+                except Exception:
+                    # fallback to file m-time if JSON missing/bad
+                    age_seconds = now - cert_file.stat().st_mtime
 
-            if moved_count > 0 or errors_count > 0:
-                bt.logging.info(
-                    f"[cert-cleanup] Archived {moved_count} certificates "
-                    f"(checked={checked_count}, errors={errors_count})"
-                )
+                if age_seconds > self.archive_after_seconds:
+                    cert_file.rename(self.historical_dir / cert_file.name)
+                    moved += 1
+            except (PermissionError, OSError, json.JSONDecodeError) as e:
+                errs += 1
+                bt.logging.debug(f"[cert-cleanup] Error processing {cert_file.name}: {e}")
 
-        except Exception as e:
-            bt.logging.warning(f"[cert-cleanup] Archive operation failed: {e}")
+        if moved or errs:
+            bt.logging.info(
+                f"[cert-cleanup] Archived {moved} certs "
+                f"(checked={checked}, errors={errs})"
+            )
 
     def _delete_very_old_certificates(self) -> None:
         if not self.historical_dir.exists():
