@@ -54,14 +54,20 @@ def _bootstrap(v: "Validator") -> None:
     if start_uid in uid_list:
         uid_list = uid_list[uid_list.index(start_uid):] + uid_list[:uid_list.index(start_uid)]
 
-    # Difficulty config
-    v._diff_cfg = DifficultyConfig(CFG_PATH, uids=uid_list)
     v._whitelist = load_whitelist(CFG_DIR / "whitelist_validators.json")
 
     # Helpers
     v.certificate_issuer = CertificateIssuer(wallet=v.wallet)
     dbdir = Path(__file__).parent / "database"; dbdir.mkdir(exist_ok=True)
     db    = dbdir / "validator_data.db"
+
+    # Difficulty config
+    v._diff_cfg = DifficultyConfig(
+        CFG_PATH,
+        uids = uid_list,
+        db_path = db,
+        hotkey_lookup = lambda u: v.metagraph.hotkeys[u],
+    )    
 
     # one time vali migration
     add_difficulty_to_challenges(str(db))

@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import threading
 from pathlib import Path
-from typing import Dict, Sequence
+from typing import Dict, Sequence, Callable
+from qbittensor.validator.config.sql_utils import max_solved_difficulty
 
 import bittensor as bt
 
+HotkeyLookup = Callable[[int], str]
 
 class DifficultyConfig:
     """Thread-safe wrapper around <uid → difficulty> map stored as JSON.
@@ -21,6 +23,9 @@ class DifficultyConfig:
         path: Path,
         uids: Sequence[int],
         default: float = 0.0,
+        *,
+        db_path: Path | None = None,
+        hotkey_lookup: HotkeyLookup | None = None,
     ):
  
         self._path = path
@@ -28,6 +33,8 @@ class DifficultyConfig:
         self._default = default
         self._uids = list(uids)
         self._table: Dict[int, float] = self._load()
+        self._db_path       = db_path
+        self._hotkey_lookup = hotkey_lookup
 
     def get(self, uid: int) -> float:
         """Retrieve the difficulty for a given UID (falls back to default if missing)."""
@@ -43,8 +50,17 @@ class DifficultyConfig:
             return False # Can't set a negative difficulty
 
         with self._lock:
-            current = self._table.get(uid, self._default)
-            new_val  = current # default: unchanged
+            # current value from local JSON (what you had before)
+            cfg_current = self._table.get(uid, self._default)
+
+            # max solved difficulty from the DB
+            db_current = 0.0
+            if self._db_path and self._hotkey_lookup:
+                miner_hotkey = self._hotkey_lookup(uid)
+                db_current   = max_solved_difficulty(self._db_path, miner_hotkey)
+
+            # whichever is higher becomes the baseline
+            current = max(cfg_current, db_current)
 
             # downward moves are free
             if value <= current:
