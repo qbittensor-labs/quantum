@@ -1,42 +1,27 @@
 import logging
 logging.getLogger("torch.autograd").setLevel(logging.ERROR)
-import torch
-torch.autograd.set_detect_anomaly(False) # global
 
-import asyncio
+import torch
+torch.autograd.set_detect_anomaly(False)
 
 import bittensor as bt
 from qbittensor.base.validator import BaseValidatorNeuron
+
 from qbittensor.validator.forward import forward
 
 
-async def main_loop(v: "Validator"):
-    while True:
-        try:
-            bt.logging.info(f"step={v.step} uid={v.uid}")
-            v.metagraph.sync(subtensor=v.subtensor)
-            await v.forward()
-            await asyncio.sleep(30)  # pacing; adjust as you like
-            v.step += 1
-        except KeyboardInterrupt:
-            bt.logging.warning("Shutting down…")
-            break
-        except Exception as e:
-            bt.logging.error(f"loop error: {e}", exc_info=True)
-            await asyncio.sleep(30)
-
-
 class Validator(BaseValidatorNeuron):
-    """Thin wrapper around BaseValidatorNeuron with custom forward loop."""
+    """Thin wrapper around BaseValidatorNeuron with a *synchronous* forward loop."""
 
-    async def forward(self):
-        return await forward(self)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        #self.step = 0 
 
-    async def shutdown_background(self):
-        if hasattr(self, "_stop_event"):
-            self._stop_event.set()
+    def forward(self):
+        return forward(self)
 
     def run(self):
+        # sanity-check hotkey
         if not self.subtensor.is_hotkey_registered(
             netuid=self.config.netuid,
             hotkey_ss58=self.wallet.hotkey.ss58_address,
@@ -44,11 +29,22 @@ class Validator(BaseValidatorNeuron):
             bt.logging.error("Hotkey not registered, aborting")
             return
 
+        bt.logging.info("🚀 Validator starting (sync mode)")
+
         try:
-            asyncio.run(main_loop(self))
+            while True:
+                try:
+                    #bt.logging.info(f"step={self.step} uid={self.uid}")
+                    self.metagraph.sync(subtensor=self.subtensor)
+                    self.forward() # sync now
+                    #self.step += 1
+                except KeyboardInterrupt:
+                    bt.logging.warning("Shutting down…")
+                    break
+                except Exception as e:
+                    bt.logging.error(f"loop error: {e}", exc_info=True)
         finally:
-            if hasattr(self, "shutdown_background"):
-                asyncio.run(self.shutdown_background())
+            # clean teardown
             if self.is_running:
                 self.stop_run_thread()
 
