@@ -91,6 +91,18 @@ class DifficultyConfig:
 
             return False
 
+    def update_uid_list(self, new_uids):
+        """Replace the live UID roster and back-fill brand-new miners."""
+        with self._lock:
+            self._uids = list(new_uids)
+            changed = False
+            for uid in new_uids:
+                if uid not in self._table:
+                    self._table[uid] = self._default
+                    changed = True
+            if changed:
+                self._dump()
+
 
     def _load(self) -> Dict[int, float]:
         """Load the table from disk, backfilling any missing UIDs."""

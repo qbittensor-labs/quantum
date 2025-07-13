@@ -7,11 +7,13 @@ import queue
 import datetime as dt
 from pathlib import Path
 from typing import Any, List
+import time
 
 # one time validator migration
 from .validator_migration import add_difficulty_to_challenges
 
 import bittensor as bt
+
 from qbittensor.validator.utils.challenge_utils import build_challenge
 from qbittensor.validator.config.difficulty_config import DifficultyConfig
 from qbittensor.validator.services.solution_processor import SolutionProcessor
@@ -32,6 +34,7 @@ CFG_DIR      = Path(__file__).resolve().parent / "config"
 CFG_DIR.mkdir(exist_ok=True)
 CFG_PATH     = CFG_DIR / "difficulty.json"
 CURSOR_PATH  = Path(__file__).resolve().parent / "last_uid.txt"
+_REFRESH_SECONDS = 300
 
 def _bootstrap(v: "Validator") -> None:
     if getattr(v, "_bootstrapped", False):
@@ -92,20 +95,40 @@ def _bootstrap(v: "Validator") -> None:
 
     bt.logging.info("✅ validator bootstrap complete")
 
+def _refresh_uid_deps(v: "Validator") -> None:
+    bt.logging.info("refreshing metagraph...")
+    raw = v.metagraph.uids.tolist()
+    uid_list = [
+        u for u in raw
+        if v.metagraph.axons[u].ip not in ("0.0.0.0", "", None)
+        and v.metagraph.axons[u].port != 0
+    ]
+
+    # only runs when the roster really changed
+    if uid_list != getattr(v, "_uid_cache", None):
+        v._uid_cache = uid_list
+        v._diff_cfg.update_uid_list(uid_list)
+        v._producer.update_uid_list(uid_list)
+
+        bt.logging.info(f"metagraph changed – {len(uid_list)} live miners")
+
 
 # Forward method
 def forward(self: "Validator") -> None:
-    """
-    Called by bittensor runtime once per block.
-    """
+    # bootstrap on the first call
     if not getattr(self, "_bootstrapped", False):
         _bootstrap(self)
 
+    now = time.time()
+    last = getattr(self, "_last_uid_refresh", 0)
+
+    if now - last >= _REFRESH_SECONDS:
+        _refresh_uid_deps(self)
+        self._last_uid_refresh = now
     try:
         item = self._producer.queue.get_nowait() # non-blocking
     except queue.Empty:
         return
-
     uid = item.uid
     miner_hotkey = self.metagraph.hotkeys[uid]
     if uid in self._in_flight: # re-entrancy guard

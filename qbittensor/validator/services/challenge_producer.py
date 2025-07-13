@@ -135,6 +135,15 @@ class ChallengeProducer:
             bt.logging.info(f"[cleanup] removed {len(items)} stashed challenges for UID {uid}")
         self._stash.clear()
 
+    _uid_lock = threading.Lock()
+
+    def update_uid_list(self, new_uids):
+        """Hot-swap the UID cycle seen by the background thread."""
+        with self._uid_lock:
+            self._uid_cycle = itertools.cycle(new_uids)
+            # keep any already-stashed payloads that still belong
+            self._stash = {uid: self._stash.get(uid, []) for uid in new_uids}
+
     # file management
     def _cleanup_old_files(self, max_age_seconds: int = 86_400) -> None:
         try:
