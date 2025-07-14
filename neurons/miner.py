@@ -10,7 +10,7 @@ from qbittensor.protocol import ChallengeCircuits
 SYNC_INTERVAL_S = 300  # 5-minute metagraph sync, keeps logs tidy
 
 # Desired difficulty level for circuit challenges
-DESIRED_DIFFICULTY = 0.0  # Change this value to request different difficulty levels
+# DESIRED_DIFFICULTY = 0.0  # USE THE CLI ARG NOW
 
 
 class Miner(BaseMinerNeuron):
@@ -31,7 +31,7 @@ class Miner(BaseMinerNeuron):
         bt.logging.info(f"circuit received")
         
         # Set the desired difficulty before processing
-        synapse.desired_difficulty = DESIRED_DIFFICULTY
+        synapse.desired_difficulty = self.config.difficulty
         
         return _solve_challenge_sync(synapse, wallet=self.wallet)
 
@@ -96,6 +96,12 @@ class Miner(BaseMinerNeuron):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     Miner.add_args(parser)
+    parser.add_argument(
+        "--difficulty",
+        type=float,
+        default=0.0,
+        help="Desired difficulty for circuit challenges",
+    )
     config = bt.config(parser)
     
     # Set blacklist config to avoid security warnings
@@ -103,6 +109,5 @@ if __name__ == "__main__":
         config.blacklist = bt.config()
     config.blacklist.allow_non_registered = False
     config.blacklist.force_validator_permit = True
-
-    bt.logging.info(f"Launching miner with desired difficulty: {DESIRED_DIFFICULTY}")
+    bt.logging.info(f"Launching miner with desired difficulty: {config.difficulty}")
     Miner(config=config).run()

@@ -1,18 +1,17 @@
-# coding: utf-8
 """
-ChallengeProducer. background task that keeps an asyncio.Queue
-filled with fresh `ChallengeCircuits` objects with difficulty awareness.
+Challenge Producer for Quantum (no longer async)
 """
 
 from __future__ import annotations
 
-import asyncio
-import importlib.resources as pkg_res
 import json
+import time
+import itertools
+import threading
 from dataclasses import asdict
 from pathlib import Path
 from typing import NamedTuple, Any, Tuple, Iterator, List
-import itertools
+import queue as q
 
 import bittensor as bt
 from qbittensor.protocol import ChallengeCircuits
@@ -20,9 +19,9 @@ from qbittensor.validator.utils.challenge_utils import build_challenge
 from qbittensor.validator.utils.validator_meta import ChallengeMeta
 from qbittensor.validator.config.difficulty_config import DifficultyConfig
 
-PKG_ROOT = Path(pkg_res.files("qbittensor.validator"))
-DEFAULT_DIR = PKG_ROOT / "pending_challenges"
-DEFAULT_DIR.mkdir(exist_ok=True)
+
+DEFAULT_DIR = (Path(__file__).resolve().parent / ".." / "pending_challenges").resolve()
+DEFAULT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class QItem(NamedTuple):
@@ -34,9 +33,13 @@ class QItem(NamedTuple):
 
 
 class ChallengeProducer:
-    """Run `start()` once; consume items from `.queue`."""
+    """
+    Spawn with .start(); consume with .queue.get().
+    Internally runs a daemon thread that fills the queue.
+    """
 
-    _SLEEP = 0.1
+    _SLEEP          = 0.1
+    _CLEAN_INTERVAL = 300
 
     def __init__(
         self,
@@ -45,73 +48,71 @@ class ChallengeProducer:
         directory: Path = DEFAULT_DIR,
         queue_size: int = 64,
         difficulty: float = 0.0,
-        diff_cfg: DifficultyConfig = None,
-        batch_size: int = 32,
-        uid_list: List[int] = None,
+        diff_cfg: DifficultyConfig | None = None,
+        batch_size: int = 1,
+        uid_list: List[int] | None = None,
         validator=None,
     ):
-        self._wallet = wallet
-        self._directory = directory
-        self._difficulty = difficulty
-        self._diff_cfg = diff_cfg
-        self._stash: dict[int, list[tuple[Any, ...]]] = {}
-        self._BATCH_SIZE = batch_size
+        self._wallet      = wallet
+        self._directory   = directory
+        self._difficulty  = difficulty
+        self._diff_cfg    = diff_cfg
+        self._stash: dict[int, list[Tuple[Any, ...]]] = {}
         self._uid_cycle: Iterator[int] = itertools.cycle(uid_list or [])
 
-        self.queue: asyncio.Queue[QItem] = asyncio.Queue(maxsize=queue_size)
-        self._stop = asyncio.Event()
-        self._task: asyncio.Task | None = None
+        self.queue: q.Queue[QItem] = q.Queue(maxsize=queue_size)
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
         self._validator = validator
 
     def start(self) -> None:
-        if self._task and not self._task.done():
+        if self._thread and self._thread.is_alive():
             return
-        # Clear stash when starting to ensure we use current batch size
         self.cleanup_stash()
-        self._task = asyncio.create_task(self._loop())
+        self._thread = threading.Thread(
+            target=self._loop,
+            name="ChallengeProducer",
+            daemon=True,
+        )
+        self._thread.start()
 
     def stop(self) -> None:
-        self._stop.set()
-        if self._diff_cfg:
-            self.cleanup_stash()
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=2)
+        self.cleanup_stash()
 
-    async def _loop(self) -> None:
-        bt.logging.info("[challenge-producer] started")
-        last_cleanup = asyncio.get_event_loop().time()
-        cleanup_interval = 300
+    def _loop(self) -> None:
+        bt.logging.info("[challenge-producer] thread started")
+        last_cleanup = time.time()
 
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
+            now = time.time()
+            if now - last_cleanup > self._CLEAN_INTERVAL:
+                self._cleanup_old_files()
+                last_cleanup = now
+
+            # If the validator is still waiting on a reply, pause.
+            if getattr(self._validator, "_in_flight", set()):
+                time.sleep(self._SLEEP)
+                continue
+
+            if self.queue.full():
+                time.sleep(self._SLEEP)
+                continue
+
             try:
-                current_time = asyncio.get_event_loop().time()
-                if current_time - last_cleanup > cleanup_interval:
-                    loop = asyncio.get_event_loop()
-                    await loop.run_in_executor(None, self._cleanup_old_files)
-                    last_cleanup = current_time
-
-                if self._diff_cfg:
-                    # pull the *next* miner UID
-                    uid = next(self._uid_cycle)
-                    if uid in self._validator._in_flight:  # ➍ back-pressure
-                        await asyncio.sleep(self._SLEEP)
-                        continue
-                    # build one circuit at their configured difficulty
-                    syn, meta, target, fp = await self._make_payload(uid)
-                    # stash the uid on the QItem so forward() knows who it's for
-                    await self.queue.put(QItem(uid, syn, meta, target, fp))
-                else:
-                    syn, meta, target = build_challenge(
-                        wallet=self._wallet, difficulty=self._difficulty
-                    )
-                    fp = self._write_to_disk(meta, syn, target)
-                    await self.queue.put(QItem(syn, meta, target, fp))
-
-                bt.logging.debug(f"[challenge-producer] queued challenge")
-            except Exception as e:
+                uid = next(self._uid_cycle)
+                syn, meta, target, fp = self._make_payload(uid)
+                self.queue.put_nowait(QItem(uid, syn, meta, target, fp))
+                bt.logging.debug("[challenge-producer] queued challenge")
+            except Exception:
                 bt.logging.error("[challenge-producer] error", exc_info=True)
-            await asyncio.sleep(self._SLEEP)
 
-    async def _make_payload(self, uid: int) -> Tuple[Any, ...]:
-        """Build one circuit, patch difficulty, return the usual 4-tuple."""
+            time.sleep(self._SLEEP)
+
+    def _make_payload(self, uid: int) -> Tuple[Any, ...]:
+        """Return a single (syn, meta, target, file_path) tuple."""
         stash = self._stash.get(uid)
         if stash:
             return stash.pop(0)
@@ -119,79 +120,58 @@ class ChallengeProducer:
         difficulty = (
             float(self._diff_cfg.get(uid)) if self._diff_cfg else self._difficulty
         )
-        bt.logging.info(f"uid: {uid}, diff: {difficulty}")
-
-        # Create just ONE circuit, not BATCH_SIZE
-        syn, meta, target = build_challenge(wallet=self._wallet, difficulty=difficulty)
+        syn, meta, target = build_challenge(
+            wallet=self._wallet,
+            difficulty=difficulty,
+        )
         syn.difficulty_level = difficulty
         fp = self._write_to_disk(meta, syn, target)
-        return (syn, meta, target, fp)
+        return syn, meta, target, fp
 
     def cleanup_stash(self) -> None:
-        """Clean up any remaining stashed challenge files."""
         for uid, items in self._stash.items():
-            for syn, meta, target_state, fp in items:
+            for _, _, _, fp in items:
                 self._cleanup_file(fp)
-            bt.logging.info(
-                f"[cleanup] Removed {len(items)} stashed challenges for UID {uid}"
-            )
+            bt.logging.info(f"[cleanup] removed {len(items)} stashed challenges for UID {uid}")
         self._stash.clear()
 
-    def _cleanup_old_files(self, max_age_seconds: int = 86400) -> None:
-        """Remove challenge files older than max_age_seconds (default 24 hours)."""
+    _uid_lock = threading.Lock()
+
+    def update_uid_list(self, new_uids):
+        """Hot-swap the UID cycle seen by the background thread."""
+        with self._uid_lock:
+            self._uid_cycle = itertools.cycle(new_uids)
+            # keep any already-stashed payloads that still belong
+            self._stash = {uid: self._stash.get(uid, []) for uid in new_uids}
+
+    # file management
+    def _cleanup_old_files(self, max_age_seconds: int = 86_400) -> None:
         try:
-            import time
-
-            if not self._directory.exists():
-                return
-
-            now = time.time()
-            removed_count = 0
-            checked_count = 0
-            errors_count = 0
-            max_files_per_run = 1000
-
+            removed = 0
             for fp in self._directory.glob("*.json"):
-                checked_count += 1
-                if checked_count > max_files_per_run:
-                    bt.logging.debug(
-                        f"[challenge-producer] Cleanup batch limit reached ({max_files_per_run} files)"
-                    )
-                    break
-
-                try:
-                    file_age = now - fp.stat().st_mtime
-                    if file_age > max_age_seconds:
-                        fp.unlink(missing_ok=True)
-                        removed_count += 1
-                except PermissionError:
-                    errors_count += 1
-                    bt.logging.debug(
-                        f"[challenge-producer] Permission denied for {fp.name}"
-                    )
-                except Exception:
-                    errors_count += 1
-                    pass
-
-            if removed_count > 0 or errors_count > 0:
-                bt.logging.info(
-                    f"[challenge-producer] Cleanup: checked={checked_count}, "
-                    f"removed={removed_count}, errors={errors_count}"
-                )
-
+                if time.time() - fp.stat().st_mtime > max_age_seconds:
+                    fp.unlink(missing_ok=True)
+                    removed += 1
+            if removed:
+                bt.logging.info(f"[challenge-producer] cleaned {removed} old files")
         except Exception as e:
-            bt.logging.warning(f"[challenge-producer] Error during cleanup: {e}")
+            bt.logging.warning(f"[challenge-producer] cleanup error: {e}")
 
+    # File management helpers
     def _write_to_disk(
-        self, meta: ChallengeMeta, syn: ChallengeCircuits, target: str
+        self,
+        meta: ChallengeMeta,
+        syn: ChallengeCircuits,
+        target: str
     ) -> Path:
+        return # removing the writes entirely; currently unused
         fp = self._directory / f"{meta.challenge_id}.json"
         with fp.open("w") as f:
             json.dump(
                 {
                     "circuit_data": syn.circuit_data,
-                    "meta": asdict(meta),
-                    "target": target,
+                    "meta"        : asdict(meta),
+                    "target"      : target,
                 },
                 f,
             )
