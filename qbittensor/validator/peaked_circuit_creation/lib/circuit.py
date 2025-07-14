@@ -1,13 +1,19 @@
 from __future__ import annotations
-
 import multiprocessing
 from abc import abstractmethod, abstractstaticmethod
 from dataclasses import dataclass
 from typing import List
-
 import numpy as np
-
 from .decompose import cnots, ising, optim_decomp
+
+_DECOMP_POOL = None
+
+def _get_decomp_pool():
+    """Get or create the reusable decomposition pool."""
+    global _DECOMP_POOL
+    if _DECOMP_POOL is None:
+        _DECOMP_POOL = multiprocessing.Pool()
+    return _DECOMP_POOL
 
 
 class Gate:
@@ -653,11 +659,12 @@ class PeakedCircuit:
 
         # this assumes every qubit is touched
         num_qubits = max(max(uni.target0, uni.target1) for uni in unis) + 1
-        with multiprocessing.Pool() as pool:
-            if choice == 0:
-                gates = [gate for subcirc in pool.map(_cnots_decomp, unis) for gate in subcirc]
-            else:
-                gates = [gate for subcirc in pool.map(_ising_decomp, unis) for gate in subcirc]
+
+        pool = _get_decomp_pool()
+        if choice == 0:
+            gates = [gate for subcirc in pool.map(_cnots_decomp, unis) for gate in subcirc]
+        else:
+            gates = [gate for subcirc in pool.map(_ising_decomp, unis) for gate in subcirc]
 
         return PeakedCircuit(
             seed,

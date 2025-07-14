@@ -105,6 +105,15 @@ def _service_one_uid(
                 f"[cert] hotkey {cert.validator_hotkey[:8]} not whitelisted"
             )
             continue
+            
+        # CRITICAL: Verify certificate origin matches the sender's UID
+        if cert.miner_uid != uid:
+            bt.logging.warning(
+                f"[cert] UID MISMATCH: Certificate for UID {cert.miner_uid} "
+                f"but received from UID {uid} - REJECTING"
+            )
+            continue
+            
         try:
             if log_certificate_as_solution(cert, miner_hotkey):
                 inserted += 1

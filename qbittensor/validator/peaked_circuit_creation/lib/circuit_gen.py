@@ -295,13 +295,10 @@ def make_circuit(
     maxiters = 1000
     model = TNModel(opt, const)
     model()
-    with warnings.catch_warnings():
-        warnings.filterwarnings(
-            action="ignore",
-            message=".*trace might not generalize.*",
-        )
-        model = torch.jit.trace_module(model, {"forward": list()})
-    optimizer = optim.AdamW(model.parameters(), lr=0.001)
+    
+    # Note: JIT tracing disabled to prevent memory issues
+    # We now scale lr here based on qubit count to prevent low peaking for higher diff
+    optimizer = optim.AdamW(model.parameters(), lr=max(0.001, 10 ** (nqubits / 4 - 11)))
     pbar = tqdm.tqdm(range(maxiters), disable=True)
     for step in pbar:
         optimizer.zero_grad()
@@ -309,7 +306,6 @@ def make_circuit(
         loss.backward()
         optimizer.step()
         pbar.set_description(f"{loss:.6e}")
-        # Log generation since progress bar turned off for pm2
         if step % 20 == 0:
             bt.logging.info(f"Circuit generation: Step {step}/{maxiters}, Current Loss: {loss:.6e}")
 
@@ -324,4 +320,9 @@ def make_circuit(
     rqc_tensors = list(init_rqc.H.tensors[nqubits:])
     pqc_tensors = list(opt.tensors[::-1])
     target_weight = float(-loss_fn(const, opt))
+    
+
+    opti.cleanup()
+    bt.logging.debug("Cleared cotengra optimizer cache")
+    
     return (rqc_tensors, pqc_tensors, target_weight)
