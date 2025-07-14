@@ -297,7 +297,8 @@ def make_circuit(
     model()
     
     # Note: JIT tracing disabled to prevent memory issues
-    optimizer = optim.AdamW(model.parameters(), lr=0.001)
+    # We now scale lr here based on qubit count to prevent low peaking for higher diff
+    optimizer = optim.AdamW(model.parameters(), lr=max(0.001, 10 ** (nqubits / 4 - 11)))
     pbar = tqdm.tqdm(range(maxiters), disable=True)
     for step in pbar:
         optimizer.zero_grad()
