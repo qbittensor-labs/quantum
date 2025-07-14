@@ -1,3 +1,7 @@
+import os
+# Set PyTorch CUDA allocation configuration to handle memory fragmentation
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 import logging
 logging.getLogger("torch.autograd").setLevel(logging.ERROR)
 
