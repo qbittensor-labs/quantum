@@ -2,7 +2,7 @@ import math
 import sqlite3
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
 
 import bittensor as bt
 import numpy as np
@@ -70,7 +70,7 @@ class ScoringManager:
         self.knee = 32  # Qubit knee point for size_function
         self.target_qubits = 50  # Target qubits for size_function to reach max score
         self.min_G_score = 0.15  # Minimum size score (G)
-        self.half_life_hours = 24.0  # Half-life for score decay in hours
+        self.half_life_hours = 72.0  # Half-life for score decay in hours
 
     def _ensure_scoring_tables(self) -> None:
         """
@@ -203,7 +203,7 @@ class ScoringManager:
         _, _, combined_score = self.calculate_combined_score(entropy, nqubits)
         return combined_score
 
-    def calculate_decayed_scores(self, lookback_days: int = 2) -> Dict[int, float]:
+    def calculate_decayed_scores(self, lookback_days: int = 3) -> Dict[int, float]:
         """
         Calculates time-decayed scores for all miners based on their correct solutions
         within a specified lookback period. Scores are normalized to a maximum of 1.0.
