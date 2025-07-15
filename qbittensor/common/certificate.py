@@ -16,6 +16,7 @@ class Certificate(BaseModel):
     challenge_id: str
     validator_hotkey: str
     miner_uid: int
+    miner_hotkey: str
     entanglement_entropy: float
     nqubits: int
     rqc_depth: int
@@ -35,6 +36,7 @@ class Certificate(BaseModel):
         "challenge_id",
         "validator_hotkey",
         "miner_uid",
+        "miner_hotkey",
         "entanglement_entropy",
         "nqubits",
         "rqc_depth",

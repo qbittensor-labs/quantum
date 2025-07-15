@@ -105,18 +105,27 @@ def _service_one_uid(
                 f"[cert] hotkey {cert.validator_hotkey[:8]} not whitelisted"
             )
             continue
-            
-        # CRITICAL: Verify certificate origin matches the sender's UID
-        if cert.miner_uid != uid:
-            bt.logging.warning(
-                f"[cert] UID MISMATCH: Certificate for UID {cert.miner_uid} "
-                f"but received from UID {uid} - REJECTING"
-            )
-            continue
-            
+
         try:
-            if log_certificate_as_solution(cert, miner_hotkey):
+            cert_owner_uid = cert.miner_uid
+            cert_owner_hotkey = cert.miner_hotkey
+            current_hotkey_for_uid = v.metagraph.hotkeys[cert_owner_uid]
+
+            if current_hotkey_for_uid != cert_owner_hotkey:
+                bt.logging.warning(
+                    f"[cert] UID-hotkey mismatch for gossiped cert. "
+                    f"Cert UID: {cert_owner_uid} has hotkey {cert_owner_hotkey[:8]}... "
+                    f"but metagraph shows {current_hotkey_for_uid[:8]}... for that UID. REJECTING."
+                )
+                continue
+
+            if log_certificate_as_solution(cert, cert_owner_hotkey):
                 inserted += 1
+
+        except IndexError:
+            bt.logging.warning(
+                f"[cert] Received gossiped cert for UID {cert.miner_uid}, but UID not in metagraph. Skipping."
+            )
         except Exception as exc:
             bt.logging.error(f"[cert] DB insert failed: {exc}", exc_info=True)
 
