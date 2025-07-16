@@ -1,0 +1,1 @@
+{"circuit_file": "peaked_circuit_diff=2.000_PUBLIC_e40104a3.qasm", "difficulty_level": 2.0, "seed": 13411, "ident": "e40104a3", "num_qubits": 37, "rqc_depth": 19, "pqc_depth": 7, "target_state": "0001000001101100001011110111111110110", "peak_prob": 5.901601017350266e-09, "est_num_shots": 381252473.7112126}

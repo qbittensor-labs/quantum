@@ -1,0 +1,1 @@
+{"circuit_file": "peaked_circuit_diff=0.700_PUBLIC_c2ee1963.qasm", "difficulty_level": 0.7, "seed": 13411, "ident": "c2ee1963", "num_qubits": 34, "rqc_depth": 18, "pqc_depth": 6, "target_state": "0001000001101100001011110111111110", "peak_prob": 1.5104054328797552e-08, "est_num_shots": 148966622.93686298}

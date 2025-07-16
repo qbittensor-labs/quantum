@@ -1,0 +1,1 @@
+{"circuit_file": "peaked_circuit_diff=0.000_PUBLIC_8329654e.qasm", "difficulty_level": 0.0, "seed": 54754, "ident": "8329654e", "num_qubits": 31, "rqc_depth": 18, "pqc_depth": 6, "target_state": "0010001100101011000011101100011", "peak_prob": 6.324283488075665e-08, "est_num_shots": 35577150.54908529}
