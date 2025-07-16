@@ -6,13 +6,11 @@ from __future__ import annotations
 
 import json
 import time
-import itertools
 import threading
 from dataclasses import asdict
 from pathlib import Path
-from typing import NamedTuple, Any, Tuple, Iterator, List
+from typing import NamedTuple, Any, Tuple, List
 import queue as q
-
 import bittensor as bt
 from qbittensor.protocol import ChallengeCircuits
 from qbittensor.validator.utils.challenge_utils import build_challenge
@@ -58,12 +56,29 @@ class ChallengeProducer:
         self._difficulty  = difficulty
         self._diff_cfg    = diff_cfg
         self._stash: dict[int, list[Tuple[Any, ...]]] = {}
-        self._uid_cycle: Iterator[int] = itertools.cycle(uid_list or [])
+        self._uid_list: List[int] = uid_list or []
+        self._uid_index: int = 0
+        self._uid_stats: dict[int, int] = {}
+        self._total_processed = 0
 
         self.queue: q.Queue[QItem] = q.Queue(maxsize=queue_size)
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._validator = validator
+
+    @property
+    def _uid_cycle(self):
+        with self._uid_lock:
+            if not self._uid_list:
+                raise StopIteration("No UIDs available")
+            
+            current_index = self._uid_index
+            uid = self._uid_list[current_index]
+            self._uid_index = (self._uid_index + 1) % len(self._uid_list)
+            self._uid_stats[uid] = self._uid_stats.get(uid, 0) + 1
+            self._total_processed += 1
+            
+            return uid
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -102,10 +117,10 @@ class ChallengeProducer:
                 continue
 
             try:
-                uid = next(self._uid_cycle)
+                uid = self._uid_cycle
                 syn, meta, target, fp = self._make_payload(uid)
                 self.queue.put_nowait(QItem(uid, syn, meta, target, fp))
-                bt.logging.debug("[challenge-producer] queued challenge")
+                bt.logging.debug(f"[challenge-producer] queued challenge for UID {uid}")
             except Exception:
                 bt.logging.error("[challenge-producer] error", exc_info=True)
 
@@ -138,11 +153,32 @@ class ChallengeProducer:
     _uid_lock = threading.Lock()
 
     def update_uid_list(self, new_uids):
-        """Hot-swap the UID cycle seen by the background thread."""
         with self._uid_lock:
-            self._uid_cycle = itertools.cycle(new_uids)
-            # keep any already-stashed payloads that still belong
+            current_uid = self._uid_list[self._uid_index] if self._uid_list and self._uid_index < len(self._uid_list) else None
+            last_processed_uid = None
+            if self._uid_list:
+                if self._uid_index > 0:
+                    last_processed_uid = self._uid_list[self._uid_index - 1]
+                elif self._total_processed > 0:
+                    last_processed_uid = self._uid_list[-1]
+            
+            self._uid_list = new_uids
+            
+            if current_uid and current_uid not in new_uids:
+                self._uid_index = 0
+                bt.logging.debug(f"[challenge-producer] reset to start (current UID {current_uid} removed)")
+            
+            elif last_processed_uid and last_processed_uid in new_uids:
+                last_index = new_uids.index(last_processed_uid)
+                self._uid_index = (last_index + 1) % len(new_uids)
+                bt.logging.debug(f"[challenge-producer] preserved position after UID {last_processed_uid}")
+            else:
+                self._uid_index = 0
+                bt.logging.debug(f"[challenge-producer] reset to start")
+            
             self._stash = {uid: self._stash.get(uid, []) for uid in new_uids}
+            self._uid_stats = {uid: count for uid, count in self._uid_stats.items() if uid in new_uids}
+            bt.logging.info(f"[challenge-producer] UID list updated: {len(new_uids)} miners")
 
     # file management
     def _cleanup_old_files(self, max_age_seconds: int = 86_400) -> None:

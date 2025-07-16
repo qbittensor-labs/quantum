@@ -82,7 +82,7 @@ class SolutionProcessor:
                 ),
                 nqubits=_col("nqubits", sol.nqubits or 0),
                 rqc_depth=_col("rqc_depth", sol.rqc_depth or 0),
-                time_received=dt.datetime.utcnow(),
+                time_received=time_sent,
             )
         except Exception as e:
             bt.logging.error(
