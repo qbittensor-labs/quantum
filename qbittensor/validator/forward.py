@@ -50,7 +50,11 @@ def _bootstrap(v: "Validator") -> None:
     v._cursor  = CursorStore(Path(__file__).parent / "last_uid.txt")
     start_uid  = v._cursor.load()
     if start_uid in uid_list:
-        uid_list = uid_list[uid_list.index(start_uid):] + uid_list[:uid_list.index(start_uid)]
+        start_index = uid_list.index(start_uid)
+        uid_list = uid_list[start_index:] + uid_list[:start_index]
+        bt.logging.debug(f"Resuming UID cycling from UID {start_uid}")
+    else:
+        bt.logging.debug(f"Starting UID cycling from beginning")
 
     v._whitelist = load_whitelist(CFG_DIR / "whitelist_validators.json")
 
