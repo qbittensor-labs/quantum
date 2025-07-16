@@ -58,7 +58,6 @@ class SolutionProcessor:
                 self._cert_issuer.issue(
                     challenge_id=sol.challenge_id,
                     miner_uid=uid,
-                    miner_hotkey=miner_hotkey,
                     entanglement_entropy=_col(
                         "entanglement_entropy", sol.entanglement_entropy or 0.0
                     ),

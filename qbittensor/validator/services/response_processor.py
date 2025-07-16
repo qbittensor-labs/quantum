@@ -96,6 +96,12 @@ def _service_one_uid(
     for raw in resp.certificates:
         total += 1
         cert = raw if isinstance(raw, Certificate) else Certificate(**raw)
+        if cert.miner_uid != uid:
+            bt.logging.warning(
+                f"[cert] UID mismatch: received from UID {uid} "
+                f"but cert claims UID {cert.miner_uid}. rejecting."
+            )
+            continue
 
         if not cert.verify():
             bt.logging.warning(f"[cert] bad signature {cert.challenge_id[:8]}")
@@ -107,19 +113,9 @@ def _service_one_uid(
             continue
 
         try:
-            cert_owner_uid = cert.miner_uid
-            cert_owner_hotkey = cert.miner_hotkey
-            current_hotkey_for_uid = v.metagraph.hotkeys[cert_owner_uid]
+            current_hotkey_for_uid = v.metagraph.hotkeys[cert.miner_uid]
 
-            if current_hotkey_for_uid != cert_owner_hotkey:
-                bt.logging.warning(
-                    f"[cert] UID-hotkey mismatch for gossiped cert. "
-                    f"Cert UID: {cert_owner_uid} has hotkey {cert_owner_hotkey[:8]}... "
-                    f"but metagraph shows {current_hotkey_for_uid[:8]}... for that UID. REJECTING."
-                )
-                continue
-
-            if log_certificate_as_solution(cert, cert_owner_hotkey):
+            if log_certificate_as_solution(cert, current_hotkey_for_uid):
                 inserted += 1
 
         except IndexError:
