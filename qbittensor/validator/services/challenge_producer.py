@@ -117,7 +117,7 @@ class ChallengeProducer:
                 continue
 
             try:
-                uid = next(self._uid_cycle)
+                uid = self._uid_cycle
                 syn, meta, target, fp = self._make_payload(uid)
                 self.queue.put_nowait(QItem(uid, syn, meta, target, fp))
                 bt.logging.debug(f"[challenge-producer] queued challenge for UID {uid}")
