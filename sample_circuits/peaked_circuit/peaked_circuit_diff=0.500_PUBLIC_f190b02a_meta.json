@@ -1,0 +1,1 @@
+{"circuit_file": "peaked_circuit_diff=0.500_PUBLIC_f190b02a.qasm", "difficulty_level": 0.5, "seed": 5174, "ident": "f190b02a", "num_qubits": 33, "rqc_depth": 18, "pqc_depth": 6, "target_state": "011100111001110110100101111111001", "peak_prob": 2.4409148439568464e-08, "est_num_shots": 92178551.44147725}

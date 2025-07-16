@@ -1,0 +1,1 @@
+{"circuit_file": "peaked_circuit_diff=2.000_PUBLIC_c3208eae.qasm", "difficulty_level": 2.0, "seed": 5174, "ident": "c3208eae", "num_qubits": 37, "rqc_depth": 19, "pqc_depth": 7, "target_state": "0111001110011101101001011111110011100", "peak_prob": 6.0484972408874065e-09, "est_num_shots": 371993223.56982213}

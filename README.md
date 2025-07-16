@@ -5,7 +5,7 @@
 </div>
 
 
-<img src="./quantum-subnet.png" />
+<img src="./img/quantum-subnet.png" />
 
 # qBitTensor: Unlocking Practical Quantum Computing on Bittensor
 
