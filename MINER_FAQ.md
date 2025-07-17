@@ -57,9 +57,15 @@ There is no incentive for executing these, these are simply provided to allow yo
 
 There was a defect during our first week after launch, where this was true due to a defect.  This defect was resolved and this is no longer the case. 
 
-### How long do I have to wait after solving a problem to receive the incentive?
+### How long should I have to wait after solving a problem to receive the incentive?
 
 Weights are set every 360 blocks + a smaller amount of time it takes for certificates to be distributed to all the validators to score you.
+
+### I've executed some of the quantum tasks assigned by a validator, but I haven't received any reward in my miner wallet yet.   What's going on?
+
+This is a common issue in Bittensor, and is generally nothing to be concerned about.  It's almost always caused by a Validator who has fallen behind on updating weights.   The situation will usually resolve iteself, once the validator restarts and reports back in with its weights, and the flow of miner emission is un-blocked.
+
+If the logs seems normal on your miner, you likely just need to wait.
 
 ### Sometimes I get lower difficulty circuits than expected, after increasing my `diff` value
 
