@@ -2,16 +2,15 @@ import math
 import sqlite3
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Tuple, Optional, Any
+from typing import Any, Dict, Tuple
+
 import bittensor as bt
 import numpy as np
+
 from qbittensor.validator.database.database_manager import DatabaseManager
 
-def size_function(
-    nqubits: int, knee: int = 32, min_score: float = 0.1, 
-    knee_score: float = 0.4,
-    exponential_base: float = 2.0
-) -> float:
+
+def size_function(nqubits: int, knee: int = 32, min_score: float = 0.1, knee_score: float = 0.4, exponential_base: float = 1.5) -> float:
     """
     Calculates a size-based score for a given number of qubits.
 
@@ -26,15 +25,16 @@ def size_function(
     - float: The calculated size score.
     """
     min_qubits = 12
-    
+
     if nqubits <= min_qubits:
         return min_score
     if nqubits <= knee:
         t = (nqubits - min_qubits) / (knee - min_qubits)
         return min_score + t * (knee_score - min_score)
-    
+
     exponent = nqubits - knee
-    return knee_score * (exponential_base ** exponent)
+    return knee_score * (exponential_base**exponent)
+
 
 class ScoringManager:
     """
@@ -43,6 +43,7 @@ class ScoringManager:
     stored in the 'solutions' table, without persisting the combined score.
     It also maintains a 'score_history' for daily aggregations.
     """
+
     def __init__(self, database_path: str):
 
         self.database_path = database_path
@@ -120,9 +121,7 @@ class ScoringManager:
         normalized = entropy / Smax
         return max(0.0, min(1.0, normalized))
 
-    def calculate_combined_score(
-        self, entropy: float, nqubits: int
-    ) -> Tuple[float, float, float]:
+    def calculate_combined_score(self, entropy: float, nqubits: int) -> Tuple[float, float, float]:
         """
         Calculates the combined score for a solution based on entanglement entropy
         and the number of qubits. This is the core scoring logic.
@@ -135,26 +134,20 @@ class ScoringManager:
         - Tuple[float, float, float]: A tuple containing (normalized_entropy_score, size_score, combined_score).
         """
         ee = self.normalize_ee(entropy, nqubits)
-        size_func = size_function(
-            nqubits, knee=self.knee, min_score=self.min_score
-        )
+        size_func = size_function(nqubits, knee=self.knee, min_score=self.min_score)
 
         weight_size = 1 - self.weight_ee
         combined = self.weight_ee * ee + weight_size * size_func
 
         return ee, size_func, combined
 
-    def calculate_single_solution_score(
-        self, entropy: float, nqubits: int, is_correct: bool
-    ) -> float:
+    def calculate_single_solution_score(self, entropy: float, nqubits: int, is_correct: bool) -> float:
 
         if not is_correct:
             return 0.0
 
         if entropy is None or entropy < 0:
-            bt.logging.warning(
-                f"Invalid entanglement_entropy ({entropy}). Using 0 for score calculation."
-            )
+            bt.logging.warning(f"Invalid entanglement_entropy ({entropy}). Using 0 for score calculation.")
             entropy = 0.0
 
         _, _, combined_score = self.calculate_combined_score(entropy, nqubits)
@@ -174,9 +167,9 @@ class ScoringManager:
         """
         current_time = datetime.now(timezone.utc)
         cutoff_time = current_time - timedelta(days=lookback_days)
-        decay_constant = (math.log(2) / self.half_life_hours)
-        scores = defaultdict(float)
-        
+        decay_constant = math.log(2) / self.half_life_hours
+        scores: Dict[int, float] = defaultdict(float)
+
         db = DatabaseManager(self.database_path)
         db.connect()
         try:
@@ -190,9 +183,7 @@ class ScoringManager:
                 (cutoff_time.isoformat(),),
             )
 
-            bt.logging.info(
-                f"[scoring] Processing {len(rows)} solution records for decayed scores."
-            )
+            bt.logging.info(f"[scoring] Processing {len(rows)} solution records for decayed scores.")
 
             for row in rows:
                 miner_uid = row["miner_uid"]
@@ -201,35 +192,25 @@ class ScoringManager:
                 is_correct = row["correct_solution"] == 1
                 timestamp_str = row["time_received"]
 
-                combined_score = self.calculate_single_solution_score(
-                    entropy, nqubits, is_correct
-                )
+                combined_score = self.calculate_single_solution_score(entropy, nqubits, is_correct)
 
                 if combined_score > 0:
                     try:
                         score_time = datetime.fromisoformat(timestamp_str)
                         if score_time.tzinfo is None:
-                            score_time = score_time.replace(
-                                tzinfo=timezone.utc
-                            )
+                            score_time = score_time.replace(tzinfo=timezone.utc)
                     except ValueError:
-                        bt.logging.warning(
-                            f"Could not parse timestamp {timestamp_str}. Skipping score."
-                        )
+                        bt.logging.warning(f"Could not parse timestamp {timestamp_str}. Skipping score.")
                         continue
 
                     age_hours = (current_time - score_time).total_seconds() / 3600.0  # Age of the solution in hours
                     decay_factor = math.exp(-decay_constant * age_hours)
                     decayed_score = combined_score * decay_factor
 
-                    scores[
-                        miner_uid
-                    ] += decayed_score
+                    scores[miner_uid] += decayed_score
 
         except sqlite3.Error as e:
-            bt.logging.error(
-                f"[scoring] Database error during decayed score calculation: {e}"
-            )
+            bt.logging.error(f"[scoring] Database error during decayed score calculation: {e}")
         finally:
             db.close()
 
@@ -238,14 +219,10 @@ class ScoringManager:
             if max_score > 0:
                 scores = {uid: score / max_score for uid, score in scores.items()}
             else:
-                bt.logging.warning(
-                    "[scoring] Max decayed score is 0, cannot normalize. All scores will be 0."
-                )
+                bt.logging.warning("[scoring] Max decayed score is 0, cannot normalize. All scores will be 0.")
                 scores = {uid: 0.0 for uid in scores}
 
-        bt.logging.info(
-            f"[scoring] Calculated normalized decayed scores for {len(scores)} miners."
-        )
+        bt.logging.info(f"[scoring] Calculated normalized decayed scores for {len(scores)} miners.")
         return dict(scores)
 
     def update_daily_score_history(self) -> None:
@@ -271,7 +248,7 @@ class ScoringManager:
                 (today.isoformat(),),
             )
 
-            daily_miner_data = defaultdict(
+            daily_miner_data: Dict[int, Dict[str, float]] = defaultdict(
                 lambda: {
                     "total_score": 0.0,
                     "solution_count": 0,
@@ -286,33 +263,19 @@ class ScoringManager:
                 nqubits = row["nqubits"]
                 is_correct = row["correct_solution"] == 1
 
-                combined_score = self.calculate_single_solution_score(
-                    entropy, nqubits, is_correct
-                )
+                combined_score = self.calculate_single_solution_score(entropy, nqubits, is_correct)
 
                 if is_correct:  # Only count correct solutions for daily stats
                     daily_miner_data[miner_uid]["total_score"] += combined_score
                     daily_miner_data[miner_uid]["solution_count"] += 1
-                    daily_miner_data[miner_uid]["total_entropy"] += (
-                        entropy if entropy is not None else 0.0
-                    )
-                    daily_miner_data[miner_uid]["total_qubits"] += (
-                        nqubits if nqubits is not None else 0
-                    )
+                    daily_miner_data[miner_uid]["total_entropy"] += entropy if entropy is not None else 0.0
+                    daily_miner_data[miner_uid]["total_qubits"] += nqubits if nqubits is not None else 0
 
             for miner_uid, data in daily_miner_data.items():
                 solution_count = data["solution_count"]
-                avg_score = (
-                    data["total_score"] / solution_count if solution_count > 0 else 0.0
-                )
-                avg_entropy = (
-                    data["total_entropy"] / solution_count
-                    if solution_count > 0
-                    else 0.0
-                )
-                avg_qubits = (
-                    data["total_qubits"] / solution_count if solution_count > 0 else 0.0
-                )
+                avg_score = data["total_score"] / solution_count if solution_count > 0 else 0.0
+                avg_entropy = data["total_entropy"] / solution_count if solution_count > 0 else 0.0
+                avg_qubits = data["total_qubits"] / solution_count if solution_count > 0 else 0.0
 
                 db.execute_query(
                     """
@@ -332,14 +295,10 @@ class ScoringManager:
                     ),
                 )
 
-            bt.logging.info(
-                f"[scoring] Updated daily history for {len(daily_miner_data)} miners."
-            )
+            bt.logging.info(f"[scoring] Updated daily history for {len(daily_miner_data)} miners.")
 
         except sqlite3.Error as e:
-            bt.logging.error(
-                f"[scoring] Database error during daily score history update: {e}"
-            )
+            bt.logging.error(f"[scoring] Database error during daily score history update: {e}")
         finally:
             db.close()
 
@@ -384,30 +343,16 @@ class ScoringManager:
 
                 if is_correct:
                     # Calculate score on-the-fly for this correct solution
-                    combined_score = self.calculate_single_solution_score(
-                        entropy, nqubits, is_correct
-                    )
+                    combined_score = self.calculate_single_solution_score(entropy, nqubits, is_correct)
                     total_score_sum += combined_score
                     total_entropy_sum += entropy if entropy is not None else 0.0
                     total_qubits_sum += nqubits if nqubits is not None else 0
                     correct_solution_count += 1
                     active_miners.add(miner_uid)
 
-            avg_score = (
-                total_score_sum / correct_solution_count
-                if correct_solution_count > 0
-                else 0.0
-            )
-            avg_entropy = (
-                total_entropy_sum / correct_solution_count
-                if correct_solution_count > 0
-                else 0.0
-            )
-            avg_qubits = (
-                total_qubits_sum / correct_solution_count
-                if correct_solution_count > 0
-                else 0.0
-            )
+            avg_score = total_score_sum / correct_solution_count if correct_solution_count > 0 else 0.0
+            avg_entropy = total_entropy_sum / correct_solution_count if correct_solution_count > 0 else 0.0
+            avg_qubits = total_qubits_sum / correct_solution_count if correct_solution_count > 0 else 0.0
 
             stats["last_24h"] = {
                 "score_count": correct_solution_count,
@@ -439,17 +384,13 @@ class ScoringManager:
                 "DELETE FROM solutions WHERE time_received < ?",
                 (cutoff_time_solutions.isoformat(),),
             )
-            bt.logging.info(
-                f"[scoring] Cleaned up old solutions (retention: {retention_days} days)."
-            )
+            bt.logging.info(f"[scoring] Cleaned up old solutions (retention: {retention_days} days).")
 
             db.execute_query(
                 "DELETE FROM score_history WHERE date < ?",
                 (history_cutoff_date.isoformat(),),
             )
-            bt.logging.info(
-                f"[scoring] Cleaned up old score history (retention: 30 days)."
-            )
+            bt.logging.info("[scoring] Cleaned up old score history (retention: 30 days).")
 
         except sqlite3.Error as e:
             bt.logging.error(f"[scoring] Database error during cleanup: {e}")
