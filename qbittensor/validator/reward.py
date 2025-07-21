@@ -10,7 +10,7 @@ import numpy as np
 from qbittensor.validator.database.database_manager import DatabaseManager
 
 
-def size_function(nqubits: int, knee: int = 32, min_score: float = 0.1, knee_score: float = 0.4, exponential_base: float = 1.5) -> float:
+def size_function(nqubits: int, knee: int = 32, min_score: float = 0.1, knee_score: float = 0.4, exponential_base: float = 1.7) -> float:
     """
     Calculates a size-based score for a given number of qubits.
 

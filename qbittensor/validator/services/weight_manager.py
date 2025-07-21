@@ -14,7 +14,7 @@ if TYPE_CHECKING:  # avoid a hard import cycle
 # CONSTANTS
 SCORING_INTERVAL = 15 * 60 # every 15 min
 WEIGHT_SETTING_INTERVAL = 20 * 60 # every 30 min
-MIN_WEIGHT              = 0.0001 # floor weight for active miners
+MIN_WEIGHT = 0.0001 # floor weight for active miners
 
 
 class WeightManager:
@@ -23,9 +23,9 @@ class WeightManager:
     """
 
     def __init__(self, validator: "Validator"):
-        self.validator          = validator
-        self.last_scoring_time  = 0.0
-        self.last_weight_time   = 0.0
+        self.validator = validator
+        self.last_scoring_time = 0.0
+        self.last_weight_time = 0.0
 
     # Public
     def update(self) -> None:
