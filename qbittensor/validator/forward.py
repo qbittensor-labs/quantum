@@ -7,7 +7,6 @@ import datetime as dt
 from pathlib import Path
 from typing import Any, List
 import time
-from .validator_migration import add_difficulty_to_challenges
 import bittensor as bt
 from qbittensor.validator.utils.challenge_utils import build_challenge
 from qbittensor.validator.config.difficulty_config import DifficultyConfig
@@ -71,9 +70,6 @@ def _bootstrap(v: "Validator") -> None:
         hotkey_lookup = lambda u: v.metagraph.hotkeys[u],
     )    
 
-    # one time vali migration
-    add_difficulty_to_challenges(str(db))
-
     v._sol_proc    = SolutionProcessor(cert_issuer=v.certificate_issuer)
     v._scoring_mgr = ScoringManager(str(db))
     v._weight_mgr  = WeightManager(v)
@@ -115,7 +111,7 @@ def _refresh_uid_deps(v: "Validator") -> None:
                 f"Resetting difficulty to 0.0."
             )
             v._diff_cfg.set(uid, 0.0)
-
+            
     v._hotkey_cache = {uid: hotkey for uid, hotkey in enumerate(v.metagraph.hotkeys)}
     final_uid_list = sorted(list(active_uids))
 
