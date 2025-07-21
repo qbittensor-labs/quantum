@@ -8,9 +8,26 @@ import torch
 torch.autograd.set_detect_anomaly(False)
 
 import bittensor as bt
+import signal
+import sys
+from pathlib import Path
 from qbittensor.base.validator import BaseValidatorNeuron
 
 from qbittensor.validator.forward import forward
+from qbittensor.validator.utils.auto_updater import start_updater, stop_updater
+
+CLEANUP_FLAG = Path("/tmp/validator_cleanup_done")
+
+def _graceful_shutdown(signum, frame):
+    bt.logging.info(f"[validator] Received signal {signum}, shutting down gracefully...")
+    stop_updater()
+    try:
+        CLEANUP_FLAG.write_text("done")
+        bt.logging.info("[validator] Cleanup flag written")
+    except Exception as e:
+        bt.logging.warning(f"[validator] Could not write cleanup flag: {e}")
+    
+    sys.exit(0)
 
 
 class Validator(BaseValidatorNeuron):
@@ -34,6 +51,9 @@ class Validator(BaseValidatorNeuron):
 
         bt.logging.info("Validator starting (sync mode)")
 
+        # Validator git repo update worker
+        start_updater(check_interval_minutes=5)
+
         try:
             while True:
                 try:
@@ -47,10 +67,20 @@ class Validator(BaseValidatorNeuron):
                 except Exception as e:
                     bt.logging.error(f"loop error: {e}", exc_info=True)
         finally:
-            # clean teardown
+            bt.logging.info("Stopping auto-updater...")
+            stop_updater()
             if self.is_running:
                 self.stop_run_thread()
 
 
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, _graceful_shutdown)
+    signal.signal(signal.SIGINT, _graceful_shutdown)
+    
+    try:
+        if CLEANUP_FLAG.exists():
+            CLEANUP_FLAG.unlink()
+    except Exception:
+        pass
+
     Validator().run()
