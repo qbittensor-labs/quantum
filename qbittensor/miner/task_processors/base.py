@@ -1,18 +1,18 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any
 
 
 class TaskProcessor(ABC):
     """Base class for task-specific circuit result processing"""
 
     @abstractmethod
-    def process(self, counts: Dict[str, int], **kwargs) -> Any:
+    def process(self, *args, **kwargs) -> Any:
         """
-        Process measurement results for a specific task
+        Process input data for a specific task
 
         Args:
-            counts: Dictionary mapping bitstrings to measurement counts
-            **kwargs: Task-specific parameters
+            *args: Positional arguments (implementation-specific)
+            **kwargs: Keyword arguments (implementation-specific)
 
         Returns:
             Task-specific result

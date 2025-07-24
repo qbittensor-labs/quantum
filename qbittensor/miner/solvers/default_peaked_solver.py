@@ -1,5 +1,7 @@
 import gc
+
 import bittensor as bt
+
 from ..simulator import create_simulator
 from ..task_processors import PeakedCircuitProcessor
 
@@ -42,7 +44,7 @@ class DefaultPeakedSolver:
     def _mps_run(self, qasm: str) -> str:
         try:
             sim = create_simulator("qiskit", method="matrix_product_state", device="CPU")
-            bt.logging.debug(f"Using MPS simulation on device: {sim.device}")
+            bt.logging.debug(f"Using MPS simulation on device: {getattr(sim, 'device', 'unknown')}")
 
             counts = sim.run(qasm, shots=1)
 
@@ -65,7 +67,7 @@ class DefaultPeakedSolver:
         for device in ["GPU", "CPU"]:
             try:
                 sim = create_simulator("qiskit", method="statevector", device=device)
-                bt.logging.debug(f"Attempting statevector simulation on device: {sim.device}")
+                bt.logging.debug(f"Attempting statevector simulation on device: {getattr(sim, 'device', 'unknown')}")
 
                 statevector = sim.get_statevector(qasm)
 
@@ -108,5 +110,5 @@ class DefaultPeakedSolver:
                     torch.cuda.empty_cache()
             except ImportError:
                 pass
-        except Exception:
+        except Exception:  # nosec
             pass
