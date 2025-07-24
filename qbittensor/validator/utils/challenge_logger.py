@@ -129,7 +129,7 @@ INSERT OR IGNORE INTO solutions (
     time_received,
     timestamp,
     correct_solution
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,1);
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1);
 """
 
 
@@ -239,9 +239,9 @@ def log_certificate_as_solution(cert: Certificate, miner_hotkey: str) -> bool:
             _INSERT_CERT_AS_SOLUTION_SQL,
             (
                 cert.challenge_id,
+                cert.circuit_type,
                 cert.validator_hotkey,
                 cert.miner_uid,
-                cert.circuit_type,
                 miner_hotkey,
                 "<certificate>",
                 0.0,

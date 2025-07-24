@@ -82,7 +82,11 @@ def _handle_challenge(syn: CircuitSynapse) -> CircuitSynapse:
     circuit_type = getattr(syn, 'circuit_kind', type(syn).__name__)
     bt.logging.info(f"Processing {circuit_type} circuit from {validator or 'unknown'}")
 
-    return _assembler.embed(syn, ready, newly_verified=received)
+    out = _assembler.embed(syn, ready, newly_verified=received)
+    if hasattr(syn, "desired_difficulty"):
+        out.desired_difficulty = syn.desired_difficulty
+
+    return out
 
 def _handle_peaked_challenge(syn: ChallengePeakedCircuit) -> ChallengePeakedCircuit:
     """handler for peaked circuits"""

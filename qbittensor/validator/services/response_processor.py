@@ -91,6 +91,7 @@ def _service_one_uid(
         return
 
     resp = resp_list[0]
+    print(resp)
 
     # certificates
     total = inserted = 0
@@ -153,19 +154,14 @@ def _service_one_uid(
             desired = getattr(sol, "desired_difficulty", None)
             if desired is not None:
                 break
+    if desired is None:
+        return
 
-    if desired is not None:
-        allowed_max = v._sol_proc.allowed_max_difficulty(uid)
-        new_diff = max(0.0, min(float(desired), allowed_max))
+    kind = getattr(resp, "circuit_kind", getattr(meta, "circuit_kind", "peaked"))
+    allowed_max = v._sol_proc.allowed_max_difficulty(uid)
+    new_diff = max(0.0, min(float(desired), allowed_max))
 
-        # pick peaked / hstab config automatically
-        kind = getattr(resp, "circuit_kind", getattr(meta, "circuit_kind", "peaked"))
-        _select_diff_cfg(v, kind).set(uid, new_diff)
-
-        bt.logging.info(
-            f"[single] UPDATED diff[{uid}] → {new_diff:.2f} "
-            f"(req {desired:.2f}, ≤ {allowed_max:.2f}, kind={kind})"
-        )
+    _select_diff_cfg(v, kind).set(uid, new_diff)
 
 def _select_diff_cfg(v, kind: str):
     """

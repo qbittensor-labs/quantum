@@ -34,7 +34,16 @@ class Miner(BaseMinerNeuron):
     def save_state(self):
         """Silencing log spam, will implement soon"""
         pass
-    
+
+    def _build_difficulty_dict(self) -> dict[str, float | int]:
+        """
+        Return the per kind difficulty the validator should use.
+        """
+        return {
+            "peaked": self.config.difficulty_peaked, # float
+            "hstab":  self.config.difficulty_hstab, # int
+        }
+        
     # Default forward method to satisfy abstract class requirement
     async def forward(self, synapse: _CircuitSynapseBase) -> _CircuitSynapseBase:
         """
@@ -76,7 +85,7 @@ class Miner(BaseMinerNeuron):
         bt.logging.info(f"Peaked circuit received")
         
         # Set the desired difficulty before processing
-        synapse.desired_difficulty = self.config.difficulty
+        synapse.desired_difficulty = float(self.config.difficulty_peaked)
         
         return _solve_challenge_sync(synapse, wallet=self.wallet)
     
@@ -85,7 +94,7 @@ class Miner(BaseMinerNeuron):
         bt.logging.info(f"H-Stab circuit received")
         
         # Set the desired difficulty before processing
-        synapse.desired_difficulty = self.config.difficulty
+        synapse.desired_difficulty = float(self.config.difficulty_hstab)
         
         return _solve_challenge_sync(synapse, wallet=self.wallet)
 
@@ -226,10 +235,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     Miner.add_args(parser)
     parser.add_argument(
-        "--difficulty",
+        "--difficulty_peaked",
         type=float,
         default=0.0,
-        help="Desired difficulty for circuit challenges",
+        help="Desired difficulty (float) for ChallengePeakedCircuit",
+    )
+    parser.add_argument(
+        "--difficulty_hstab",
+        type=int,
+        default=26,
+        help="Desired difficulty (int) for ChallengeHStabCircuit",
     )
     config = bt.config(parser)
     

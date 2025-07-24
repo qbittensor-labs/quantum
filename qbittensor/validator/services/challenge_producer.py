@@ -78,8 +78,8 @@ class ChallengeProducer:
 
         # strategy
         self._strategies: Dict[str, _KindStrategy] = {
-            "peaked": _KindStrategy(0.5, build_peaked_challenge),
-            "hstab": _KindStrategy(0.5, build_hstab_challenge),
+            "peaked": _KindStrategy(0.01, build_peaked_challenge),
+            "hstab": _KindStrategy(0.99, build_hstab_challenge),
         }
         self._weights_cache = [s.weight for s in self._strategies.values()]
 

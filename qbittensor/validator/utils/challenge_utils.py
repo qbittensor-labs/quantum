@@ -11,7 +11,6 @@ import hashlib
 from typing import Iterable, Tuple
 
 import bittensor as bt
-import torch
 import stim
 
 from qbittensor.protocol import (
@@ -82,7 +81,7 @@ def build_hstab_challenge(
     """
     Build an H-Stab circuit challenge.
     """
-    nqubits: int = int(difficulty) # for now: diff == number of qubits TODO: fix
+    nqubits: int = max(26, round(difficulty))
     seed = random.randrange(1 << 30)
 
     generator = make_gen(seed)
@@ -103,7 +102,7 @@ def build_hstab_challenge(
         circuit_kind="hstab",
         difficulty=difficulty,
         validator_hotkey=wallet.hotkey.ss58_address,
-        entanglement_entropy=None,
+        entanglement_entropy=0.0,
         nqubits=nqubits,
         rqc_depth=0,
     )
