@@ -44,6 +44,17 @@ class SolutionProcessor:
         Checks the bitstring against the canonical answer in the DB. Logs the attempt via
         `log_solution()`.
         """
+        ch_row = self._challenge_row(sol.challenge_id)
+        if ch_row is None:
+            bt.logging.trace(f"[solution-proc] no challenge row for {sol.challenge_id[:10]}")
+            return False
+
+        expected_uid = ch_row["miner_uid"]
+        if expected_uid != uid:
+            bt.logging.trace(
+                f"[solution‑proc] UID mismatch"
+            )
+            return False
         is_correct = self._verify(sol.challenge_id, sol.solution_bitstring)
 
         ch_row = self._challenge_row(sol.challenge_id)
