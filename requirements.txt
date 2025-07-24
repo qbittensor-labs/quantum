@@ -11,6 +11,7 @@ quimb>=1.11.0
 rich==14.0.0
 scipy>=1.11.0
 setuptools>=70.0.0
+stim>=1.15.0
 sympy>=1.12.0
 torch>=2.4.0
 torch_optimizer>=0.3.0
