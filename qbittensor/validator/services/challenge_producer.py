@@ -1,95 +1,99 @@
 """
-Challenge Producer for Quantum (no longer async)
+ChallengeProducer - queues hstab and peaked challenges for miners.
 """
 
 from __future__ import annotations
 
-import json
-import time
+import queue
+import random
 import threading
-from dataclasses import asdict
+import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import NamedTuple, Any, Tuple, List
-import queue as q
+from typing import Any, Dict, List, NamedTuple, Tuple
+
 import bittensor as bt
-from qbittensor.protocol import ChallengeCircuits
-from qbittensor.validator.utils.challenge_utils import build_challenge
-from qbittensor.validator.utils.validator_meta import ChallengeMeta
 from qbittensor.validator.config.difficulty_config import DifficultyConfig
+from qbittensor.validator.utils.challenge_utils import (
+    build_peaked_challenge,
+    build_hstab_challenge,
+)
+from qbittensor.validator.utils.validator_meta import ChallengeMeta
 
-
-DEFAULT_DIR = (Path(__file__).resolve().parent / ".." / "pending_challenges").resolve()
-DEFAULT_DIR.mkdir(parents=True, exist_ok=True)
+__all__ = ["ChallengeProducer", "QItem"]
 
 
 class QItem(NamedTuple):
     uid: int
-    syn: ChallengeCircuits
+    syn: Any  # general synapse type for new circuits
     meta: ChallengeMeta
     target: str
     file_path: Path | None
 
 
+# define dataclass class for challenges
+@dataclass(slots=True)
+class _KindStrategy:
+    weight: float
+    builder: callable
+
 class ChallengeProducer:
     """
-    Spawn with .start(); consume with .queue.get().
-    Internally runs a daemon thread that fills the queue.
+    Fills a queue with challenge. Backround thread
     """
 
-    _SLEEP          = 0.1
-    _CLEAN_INTERVAL = 300
+    _SLEEP_S: float = 0.1
+    _CLEAN_INTERVAL_S: int = 300
 
     def __init__(
         self,
         wallet,
         *,
-        directory: Path = DEFAULT_DIR,
+        directory: Path | None = None,
         queue_size: int = 64,
-        difficulty: float = 0.0,
-        diff_cfg: DifficultyConfig | None = None,
-        batch_size: int = 1,
+        default_difficulty: float = 0.0,
+        diff_cfg: Dict[str, DifficultyConfig],
         uid_list: List[int] | None = None,
         validator=None,
-    ):
-        self._wallet      = wallet
-        self._directory   = directory
-        self._difficulty  = difficulty
-        self._diff_cfg    = diff_cfg
-        self._stash: dict[int, list[Tuple[Any, ...]]] = {}
-        self._uid_list: List[int] = uid_list or []
-        self._uid_index: int = 0
-        self._uid_stats: dict[int, int] = {}
-        self._total_processed = 0
+    ) -> None:
+        self._wallet = wallet
+        self._directory = (
+            directory
+            or (Path(__file__).resolve().parent / ".." / "pending_challenges").resolve()
+        )
+        self._directory.mkdir(parents=True, exist_ok=True)
 
-        self.queue: q.Queue[QItem] = q.Queue(maxsize=queue_size)
+        self.queue: "queue.Queue[QItem]" = queue.Queue(maxsize=queue_size)
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
+
+        self._stash: Dict[int, List[Tuple[Any, ...]]] = {}
+        self._uid_list: List[int] = uid_list or []
+        self._uid_index: int = 0
+        self._uid_lock = threading.Lock()
+
         self._validator = validator
+        self._diff_cfg = diff_cfg
+        self._default_difficulty = default_difficulty
 
-    @property
-    def _uid_cycle(self):
-        with self._uid_lock:
-            if not self._uid_list:
-                raise StopIteration("No UIDs available")
-            
-            current_index = self._uid_index
-            uid = self._uid_list[current_index]
-            self._uid_index = (self._uid_index + 1) % len(self._uid_list)
-            self._uid_stats[uid] = self._uid_stats.get(uid, 0) + 1
-            self._total_processed += 1
-            
-            return uid
+        # strategy
+        self._strategies: Dict[str, _KindStrategy] = {
+            "peaked": _KindStrategy(0.5, build_peaked_challenge),
+            "hstab": _KindStrategy(0.5, build_hstab_challenge),
+        }
+        self._weights_cache = [s.weight for s in self._strategies.values()]
 
+    # Start producer
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
         self.cleanup_stash()
+
         self._thread = threading.Thread(
-            target=self._loop,
-            name="ChallengeProducer",
-            daemon=True,
+            target=self._loop, name="ChallengeProducer", daemon=True
         )
         self._thread.start()
+        bt.logging.info("[challenge-producer] thread started")
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -97,125 +101,94 @@ class ChallengeProducer:
             self._thread.join(timeout=2)
         self.cleanup_stash()
 
+    # Public
+    def update_uid_list(self, new_uids: List[int]) -> None:
+        """
+        Replace the UID ring while preserving position so we dont
+        miss a subset of miners when the set changes.
+        """
+        with self._uid_lock:
+            current_uid = (
+                self._uid_list[self._uid_index]
+                if self._uid_list and self._uid_index < len(self._uid_list)
+                else None
+            )
+
+            self._uid_list = new_uids
+            if current_uid in new_uids:
+                self._uid_index = (new_uids.index(current_uid) + 1) % len(new_uids)
+            else:
+                self._uid_index = 0
+
+            # prune stash for removed miners
+            self._stash = {u: self._stash.get(u, []) for u in new_uids}
+
+            bt.logging.info(
+                f"[challenge-producer] UID list updated - {len(new_uids)} miners"
+            )
+
+    # Thread body
     def _loop(self) -> None:
-        bt.logging.info("[challenge-producer] thread started")
         last_cleanup = time.time()
 
         while not self._stop_event.is_set():
             now = time.time()
-            if now - last_cleanup > self._CLEAN_INTERVAL:
+            if now - last_cleanup > self._CLEAN_INTERVAL_S:
                 self._cleanup_old_files()
                 last_cleanup = now
 
-            # If the validator is still waiting on a reply, pause.
-            if getattr(self._validator, "_in_flight", set()):
-                time.sleep(self._SLEEP)
-                continue
-
-            if self.queue.full():
-                time.sleep(self._SLEEP)
+            if self.queue.full() or getattr(self._validator, "_in_flight", set()):
+                time.sleep(self._SLEEP_S)
                 continue
 
             try:
-                uid = self._uid_cycle
-                syn, meta, target, fp = self._make_payload(uid)
-                self.queue.put_nowait(QItem(uid, syn, meta, target, fp))
-                bt.logging.debug(f"[challenge-producer] queued challenge for UID {uid}")
+                uid = self._next_uid()
+                syn, meta, target = self._build_challenge_for_uid(uid)
+                self.queue.put_nowait(QItem(uid, syn, meta, target, file_path=None))
+                bt.logging.trace(
+                    f"[challenge-producer] queued {meta.circuit_kind} for UID {uid}"
+                )
             except Exception:
                 bt.logging.error("[challenge-producer] error", exc_info=True)
 
-            time.sleep(self._SLEEP)
+            time.sleep(self._SLEEP_S)
 
-    def _make_payload(self, uid: int) -> Tuple[Any, ...]:
-        """Return a single (syn, meta, target, file_path) tuple."""
-        stash = self._stash.get(uid)
-        if stash:
-            return stash.pop(0)
+    # Challenge creation
+    def _build_challenge_for_uid(self, uid: int) -> Tuple[Any, ChallengeMeta, str]:
+        kind = random.choices(
+            population=list(self._strategies.keys()),
+            weights=self._weights_cache,
+            k=1,
+        )[0]
 
-        difficulty = (
-            float(self._diff_cfg.get(uid)) if self._diff_cfg else self._difficulty
-        )
-        syn, meta, target = build_challenge(
+        strat = self._strategies[kind]
+        difficulty = self._diff_cfg[kind].get(uid)
+        syn, meta, target = strat.builder(
             wallet=self._wallet,
             difficulty=difficulty,
         )
-        syn.difficulty_level = difficulty
-        fp = self._write_to_disk(meta, syn, target)
-        return syn, meta, target, fp
+        return syn, meta, target
+
+    # UID handler
+    def _next_uid(self) -> int:
+        with self._uid_lock:
+            if not self._uid_list:
+                raise RuntimeError("No UIDs available")
+            uid = self._uid_list[self._uid_index]
+            self._uid_index = (self._uid_index + 1) % len(self._uid_list)
+            return uid
 
     def cleanup_stash(self) -> None:
         for uid, items in self._stash.items():
-            for _, _, _, fp in items:
+            for *_, fp in items:
                 self._cleanup_file(fp)
-            bt.logging.info(f"[cleanup] removed {len(items)} stashed challenges for UID {uid}")
+            bt.logging.debug(
+                f"[cleanup] removed {len(items)} stashed challenges for UID {uid}"
+            )
         self._stash.clear()
 
-    _uid_lock = threading.Lock()
-
-    def update_uid_list(self, new_uids):
-        with self._uid_lock:
-            current_uid = self._uid_list[self._uid_index] if self._uid_list and self._uid_index < len(self._uid_list) else None
-            last_processed_uid = None
-            if self._uid_list:
-                if self._uid_index > 0:
-                    last_processed_uid = self._uid_list[self._uid_index - 1]
-                elif self._total_processed > 0:
-                    last_processed_uid = self._uid_list[-1]
-            
-            self._uid_list = new_uids
-            
-            if current_uid and current_uid not in new_uids:
-                self._uid_index = 0
-                bt.logging.debug(f"[challenge-producer] reset to start (current UID {current_uid} removed)")
-            
-            elif last_processed_uid and last_processed_uid in new_uids:
-                last_index = new_uids.index(last_processed_uid)
-                self._uid_index = (last_index + 1) % len(new_uids)
-                bt.logging.debug(f"[challenge-producer] preserved position after UID {last_processed_uid}")
-            else:
-                self._uid_index = 0
-                bt.logging.debug(f"[challenge-producer] reset to start")
-            
-            self._stash = {uid: self._stash.get(uid, []) for uid in new_uids}
-            self._uid_stats = {uid: count for uid, count in self._uid_stats.items() if uid in new_uids}
-            bt.logging.info(f"[challenge-producer] UID list updated: {len(new_uids)} miners")
-
-    # file management
-    def _cleanup_old_files(self, max_age_seconds: int = 86_400) -> None:
-        try:
-            removed = 0
-            for fp in self._directory.glob("*.json"):
-                if time.time() - fp.stat().st_mtime > max_age_seconds:
-                    fp.unlink(missing_ok=True)
-                    removed += 1
-            if removed:
-                bt.logging.info(f"[challenge-producer] cleaned {removed} old files")
-        except Exception as e:
-            bt.logging.warning(f"[challenge-producer] cleanup error: {e}")
-
-    # File management helpers
-    def _write_to_disk(
-        self,
-        meta: ChallengeMeta,
-        syn: ChallengeCircuits,
-        target: str
-    ) -> Path:
-        return # removing the writes entirely; currently unused
-        fp = self._directory / f"{meta.challenge_id}.json"
-        with fp.open("w") as f:
-            json.dump(
-                {
-                    "circuit_data": syn.circuit_data,
-                    "meta"        : asdict(meta),
-                    "target"      : target,
-                },
-                f,
-            )
-        return fp
-
     def _cleanup_file(self, fp: Path | None) -> None:
-        if fp and fp.exists():
-            try:
-                fp.unlink(missing_ok=True)
-            except Exception:
-                bt.logging.warning(f"[cleanup] could not delete {fp}")
+        pass
+
+    def _cleanup_old_files(self) -> None:
+        pass

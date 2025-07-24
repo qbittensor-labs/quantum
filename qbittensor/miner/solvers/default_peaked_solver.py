@@ -1,7 +1,5 @@
 import gc
-
 import bittensor as bt
-
 from ..simulator import create_simulator
 from ..task_processors import PeakedCircuitProcessor
 

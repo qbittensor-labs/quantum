@@ -2,7 +2,7 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 from qiskit import QuantumCircuit
-from qiskit.circuit.library import RXXGate, RYYGate, RZZGate
+from qiskit.circuit.library import RXXGate, RYYGate, RZZGate, U3Gate
 from qiskit.qasm2 import CustomInstruction, loads
 from qiskit_aer import AerSimulator
 
@@ -72,13 +72,17 @@ class DefaultSim(QuantumSimulator):
             raise RuntimeError(f"Failed to get statevector: {str(e)}")
 
     def _parse_qasm(self, qasm: str) -> QuantumCircuit:
-        custom_instructions = [
-            CustomInstruction("rxx", 1, 2, RXXGate, builtin=True),
-            CustomInstruction("ryy", 1, 2, RYYGate, builtin=True),
-            CustomInstruction("rzz", 1, 2, RZZGate, builtin=True),
-        ]
-
-        return loads(qasm, custom_instructions=custom_instructions)
+        """Parse QASM string to QuantumCircuit with fallback for custom instructions."""
+        try:
+            return QuantumCircuit.from_qasm_str(qasm)
+        except Exception:
+            custom_instructions = [
+                CustomInstruction("rxx", 1, 2, RXXGate, builtin=True),
+                CustomInstruction("ryy", 1, 2, RYYGate, builtin=True),
+                CustomInstruction("rzz", 1, 2, RZZGate, builtin=True),
+                CustomInstruction("u3", 3, 1, U3Gate, builtin=True),
+            ]
+            return loads(qasm, custom_instructions=custom_instructions)
 
     def get_info(self) -> Dict[str, Any]:
         """Get information about the simulator backend."""

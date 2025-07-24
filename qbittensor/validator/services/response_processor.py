@@ -51,6 +51,7 @@ def _service_one_uid(
     try:
         log_challenge(
             challenge_id=meta.challenge_id,
+            circuit_type=meta.circuit_kind,
             validator_hotkey=meta.validator_hotkey,
             miner_uid=uid,
             difficulty_level = meta.difficulty,
@@ -156,8 +157,20 @@ def _service_one_uid(
     if desired is not None:
         allowed_max = v._sol_proc.allowed_max_difficulty(uid)
         new_diff = max(0.0, min(float(desired), allowed_max))
-        v._diff_cfg.set(uid, new_diff)
+
+        # pick peaked / hstab config automatically
+        kind = getattr(resp, "circuit_kind", getattr(meta, "circuit_kind", "peaked"))
+        _select_diff_cfg(v, kind).set(uid, new_diff)
+
         bt.logging.info(
             f"[single] UPDATED diff[{uid}] → {new_diff:.2f} "
-            f"(req {desired:.2f}, ≤ {allowed_max:.2f})"
+            f"(req {desired:.2f}, ≤ {allowed_max:.2f}, kind={kind})"
         )
+
+def _select_diff_cfg(v, kind: str):
+    """
+    Return the DifficultyConfig for kind ('peaked', 'hstab')
+    """
+    if isinstance(v._diff_cfg, dict):
+        return v._diff_cfg.get(kind) or next(iter(v._diff_cfg.values()))
+    return v._diff_cfg # legacy
