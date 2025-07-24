@@ -1,11 +1,16 @@
 import gc
 import re
+
 import bittensor as bt
+
 from ..simulator import create_simulator
 from ..task_processors import HStabCircuitProcessor
 
 
 class DefaultHStabSolver:
+    def __init__(self, alt_method: bool = False):
+        self.alt_method = alt_method
+
     def solve(self, qasm: str) -> str:
         """
         Solve a hidden stabilizer circuit to find the stabilizer generators.
@@ -18,9 +23,8 @@ class DefaultHStabSolver:
         """
         try:
             num_qubits = self._count_qubits(qasm)
-            bt.logging.info(
-                f"Solving hidden stabilizer circuit with {num_qubits} qubits"
-            )
+            method_name = "brute force" if self.alt_method else "stim decomposition"
+            bt.logging.info(f"Solving hidden stabilizer circuit with {num_qubits} qubits ({method_name})")
             return self._run(qasm)
 
         except Exception as e:
@@ -39,13 +43,16 @@ class DefaultHStabSolver:
                     continue
 
                 processor = HStabCircuitProcessor()
-                result = processor.process(statevector)
+
+                if self.alt_method:
+                    result = processor.process_alt_method(statevector)
+                else:
+                    result = processor.process(statevector)
 
                 if result.get("success", False):
                     stabilizers = result.get("stabilizers", [])
-                    bt.logging.info(
-                        f"Hidden stabilizer simulation successful on {device}"
-                    )
+                    method_name = "alternate" if self.alt_method else "stim decomposition"
+                    bt.logging.info(f"Hidden stabilizer solution ({method_name}) successful on {device}")
                     return self._format_stabilizers(stabilizers)
 
             except Exception as e:
@@ -87,5 +94,5 @@ class DefaultHStabSolver:
                     torch.cuda.empty_cache()
             except ImportError:
                 pass
-        except Exception:
+        except Exception:  # nosec
             pass
