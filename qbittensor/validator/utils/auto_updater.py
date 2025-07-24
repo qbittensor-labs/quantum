@@ -116,7 +116,7 @@ def start_updater(check_interval_minutes: int = 5) -> None:
     interval = check_interval_minutes * 60
     updater = threading.Thread(
         target=auto_update,
-        args=(".", "main", interval, _stop_event),
+        args=(".", "new_circuit", interval, _stop_event),
         daemon=True,
         name="auto-updater",
     )
