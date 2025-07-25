@@ -1,39 +1,60 @@
 """
-Forward method for a Validator Subnet 63 - Quantum
+Forward method for a Validator in Subnet 63 - Quantum
 """
 from __future__ import annotations
-import queue
-import datetime as dt
+
+import concurrent.futures as futures
+import queue, threading, time, os, asyncio
 from pathlib import Path
 from typing import Any, List
-import time
+
 import bittensor as bt
 from qbittensor.validator.config.difficulty_config import DifficultyConfig
-from qbittensor.validator.services.solution_processor import SolutionProcessor
-from qbittensor.validator.services.solution_extractor import SolutionExtractor
-from qbittensor.validator.services.weight_manager import WeightManager
-from qbittensor.validator.services.certificate_issuer import CertificateIssuer
 from qbittensor.validator.reward import ScoringManager
+from qbittensor.validator.services.certificate_issuer import CertificateIssuer
+from qbittensor.validator.services.solution_processor import SolutionProcessor
+from qbittensor.validator.services.weight_manager import WeightManager
 from qbittensor.validator.utils.whitelist import load_whitelist
-from qbittensor.common.certificate import Certificate
 
-RPC_DEADLINE = 10  # shorter now
+# AUTO‑SCALE: detect hardware once at import time
+try:
+    import torch
+    _GPU_COUNT = torch.cuda.device_count()
+except Exception:
+    _GPU_COUNT = 0
+
+_CPU_COUNT = max(1, os.cpu_count() or 1)
+
+_PEAKED_WORKERS = max(1, min(32, (_GPU_COUNT or 1) * 2)) # GPU‑bound
+_HSTAB_WORKERS  = max(4, min(32, _CPU_COUNT * 2)) # CPU‑bound
+
+_PEAKED_QSIZE = _PEAKED_WORKERS * 4
+_HSTAB_QSIZE  = _HSTAB_WORKERS * 4
+
+RPC_DEADLINE = 10
 CFG_DIR = Path(__file__).resolve().parent / "config"
 CFG_DIR.mkdir(exist_ok=True)
-CFG_PATH = CFG_DIR / "difficulty.json"
-CURSOR_PATH = Path(__file__).resolve().parent / "last_uid.txt"
 _REFRESH_SECONDS = 300
+_DISPATCH_SLEEP  = 0.01
+_inflight_lock   = threading.Lock()
 
+# guarantee an asyncio loop in each worker thread
+def _ensure_event_loop() -> None:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
+# bootstrap & runtime
 def _bootstrap(v: "Validator") -> None:
     if getattr(v, "_bootstrapped", False):
         return
     v._bootstrapped = True
 
-    # ONE‑TIME MIGRATION OF LEGACY difficulty.json
+    # one‑time migration of legacy difficulty.json
     legacy_fp = CFG_DIR / "difficulty.json"
     peaked_fp = CFG_DIR / "difficulty_peaked.json"
-
     if legacy_fp.exists() and not peaked_fp.exists():
         try:
             legacy_fp.replace(peaked_fp)
@@ -41,132 +62,140 @@ def _bootstrap(v: "Validator") -> None:
         except Exception as e:
             bt.logging.warning(f"[migration] failed to rename legacy file: {e!r}")
 
-    v._in_flight: set[int] = set()
+    v._in_flight   = set()
     v._hotkey_cache: dict[int, str] = {}
 
-    # UID list
     raw = v.metagraph.uids.tolist()
-    uid_list = [
-        u
-        for u in raw
-        if v.metagraph.axons[u].ip not in ("0.0.0.0", "", None)
-        and v.metagraph.axons[u].port != 0
-    ]
+    uid_list = [u for u in raw if v.metagraph.axons[u].is_serving]
 
     from qbittensor.validator.services.cursor_store import CursorStore
-
     v._cursor = CursorStore(Path(__file__).parent / "last_uid.txt")
+
     start_uid = v._cursor.load()
     if start_uid in uid_list:
-        start_index = uid_list.index(start_uid)
-        uid_list = uid_list[start_index:] + uid_list[:start_index]
-        bt.logging.debug(f"Resuming UID cycling from UID {start_uid}")
-    else:
-        bt.logging.debug(f"Starting UID cycling from beginning")
+        idx = uid_list.index(start_uid)
+        uid_list = uid_list[idx:] + uid_list[:idx]
 
     v._whitelist = load_whitelist(CFG_DIR / "whitelist_validators.json")
 
-    # Helpers
-    v.certificate_issuer = CertificateIssuer(wallet=v.wallet)
-    dbdir = Path(__file__).parent / "database"
-    dbdir.mkdir(exist_ok=True)
-    db = dbdir / "validator_data.db"
+    db_dir = Path(__file__).parent / "database"; db_dir.mkdir(exist_ok=True)
+    db_path = db_dir / "validator_data.db"
 
-    # Difficulty config
     v._diff_cfg = {
         "peaked": DifficultyConfig(
-            CFG_DIR / "difficulty_peaked.json",
-            uids=uid_list,
-            default=0.0,
-            db_path=db,
-            hotkey_lookup=lambda u: v.metagraph.hotkeys[u],
+            CFG_DIR / "difficulty_peaked.json", uid_list, 0.0, db_path=db_path,
+            hotkey_lookup=lambda u: v.metagraph.hotkeys[u], clamp=True
         ),
         "hstab": DifficultyConfig(
-            CFG_DIR / "difficulty_hstab.json",
-            uids=uid_list,
-            default=26.0,
-            db_path=db,
-            hotkey_lookup=lambda u: v.metagraph.hotkeys[u],
+            CFG_DIR / "difficulty_hstab.json", uid_list, 26.0, db_path=db_path,
+            hotkey_lookup=lambda u: v.metagraph.hotkeys[u], clamp=False
         ),
     }
 
-    v._sol_proc = SolutionProcessor(cert_issuer=v.certificate_issuer)
-    v._scoring_mgr = ScoringManager(str(db))
-    v._weight_mgr = WeightManager(v)
+    v.certificate_issuer = CertificateIssuer(wallet=v.wallet)
+    v._sol_proc  = SolutionProcessor(cert_issuer=v.certificate_issuer)
+    v._scoring_mgr = ScoringManager(str(db_path))
+    v._weight_mgr  = WeightManager(v)
 
-    # ChallengeProducer
     from qbittensor.validator.services.challenge_producer import ChallengeProducer
+    v._producers = {
+        "peaked": ChallengeProducer(
+            wallet=v.wallet, diff_cfg={"peaked": v._diff_cfg["peaked"]},
+            uid_list=uid_list, validator=v, queue_size=_PEAKED_QSIZE
+        ),
+        "hstab": ChallengeProducer(
+            wallet=v.wallet, diff_cfg={"hstab": v._diff_cfg["hstab"]},
+            uid_list=uid_list, validator=v, queue_size=_HSTAB_QSIZE
+        ),
+    }
+    v._producers["peaked"]._strategies["hstab"].weight = 0.0
+    v._producers["hstab"]._strategies["peaked"].weight = 0.0
+    for p in v._producers.values():
+        p._weights_cache = [s.weight for s in p._strategies.values()]
+        p.start()
 
-    v._producer = ChallengeProducer(
-        wallet=v.wallet,
-        diff_cfg=v._diff_cfg,
-        uid_list=uid_list,
-        validator=v,
-    )
-    v._producer.start()
-
-    # ResponseProcessor
     from qbittensor.validator.services.response_processor import ResponseProcessor
-
     v._resp_proc = ResponseProcessor(v)
 
-    bt.logging.info("Validator bootstrap complete")
+    v._queues = {k: p.queue for k, p in v._producers.items()}
+    v._executors = {
+        "peaked": futures.ThreadPoolExecutor(max_workers=_PEAKED_WORKERS, thread_name_prefix="peaked"),
+        "hstab": futures.ThreadPoolExecutor(max_workers=_HSTAB_WORKERS,  thread_name_prefix="hstab"),
+    }
+
+    if not hasattr(v, "_dispatcher_thread"):
+        v._dispatcher_thread = threading.Thread(target=_dispatcher_loop, args=(v,), name="Dispatcher", daemon=True)
+        v._dispatcher_thread.start()
+
+    bt.logging.info(f"Validator bootstrap complete - workers: peaked={_PEAKED_WORKERS}, hstab={_HSTAB_WORKERS}")
+
+
+def _dispatcher_loop(v: "Validator") -> None:
+    while True:
+        for kind, q in v._queues.items():
+            try:
+                item = q.get_nowait()
+            except queue.Empty:
+                continue
+            v._executors[kind].submit(_handle_item, v, item)
+        time.sleep(_DISPATCH_SLEEP)
+
+
+_dendrite_lock = threading.Lock()
+
+def _handle_item(v: "Validator", item) -> None:
+    _ensure_event_loop()
+    uid, *_ = item
+    with _inflight_lock:
+        if uid in v._in_flight:
+            return
+        v._in_flight.add(uid)
+    try:
+        miner_hotkey = v.metagraph.hotkeys[uid]
+        with _dendrite_lock:
+            v._resp_proc.process(item, miner_hotkey=miner_hotkey)
+    finally:
+        with _inflight_lock:
+            v._in_flight.discard(uid)
+        v._cursor.save(uid)
+
 
 def _refresh_uid_deps(v: "Validator") -> None:
-    bt.logging.info("refreshing metagraph...")
+    bt.logging.info("refreshing metagraph…")
     v.metagraph.sync()
 
-    raw_uids = v.metagraph.uids.tolist()
-    active_uids = {u for u in raw_uids if v.metagraph.axons[u].is_serving}
-
-    for uid, new_hotkey in enumerate(v.metagraph.hotkeys):
-        if uid not in active_uids:
+    live = {u for u in v.metagraph.uids if v.metagraph.axons[u].is_serving}
+    for uid, hk in enumerate(v.metagraph.hotkeys):
+        if uid not in live:
             continue
-
-        previous_hotkey = v._hotkey_cache.get(uid)
-        if previous_hotkey and previous_hotkey != new_hotkey:
-            bt.logging.info(
-                f"UID {uid} has been reassigned from {previous_hotkey} to {new_hotkey}. "
-                f"Resetting difficulty to 0.0."
-            )
+        prev = v._hotkey_cache.get(uid)
+        if prev and prev != hk:
+            bt.logging.info(f"UID {uid} reassigned {prev} - {hk}; resetting difficulty")
             v._diff_cfg.set(uid, 0.0)
+    v._hotkey_cache = {uid: hk for uid, hk in enumerate(v.metagraph.hotkeys)}
 
-    v._hotkey_cache = {uid: hotkey for uid, hotkey in enumerate(v.metagraph.hotkeys)}
-    final_uid_list = sorted(list(active_uids))
-
-    if final_uid_list != getattr(v, "_uid_cache", None):
-        v._uid_cache = final_uid_list
+    final_uids = sorted(live)
+    if final_uids != getattr(v, "_uid_cache", None):
+        v._uid_cache = final_uids
         for cfg in v._diff_cfg.values():
-            cfg.update_uid_list(final_uid_list)
-        v._producer.update_uid_list(final_uid_list)
-        bt.logging.info(f"metagraph changed: {len(final_uid_list)} live miners")
+            cfg.update_uid_list(final_uids)
+        for p in v._producers.values():
+            p.update_uid_list(final_uids)
+        bt.logging.info(f"metagraph changed: {len(final_uids)} live miners")
 
 
 def forward(self: "Validator") -> None:
+    """Entry point"""
     if not getattr(self, "_bootstrapped", False):
         _bootstrap(self)
 
     now = time.time()
-    last = getattr(self, "_last_uid_refresh", 0)
-
-    if now - last >= _REFRESH_SECONDS:
+    if now - getattr(self, "_last_uid_refresh", 0) >= _REFRESH_SECONDS:
         _refresh_uid_deps(self)
         self._last_uid_refresh = now
-    try:
-        item = self._producer.queue.get_nowait()
-    except queue.Empty:
-        return
-    uid = item.uid
-    miner_hotkey = self.metagraph.hotkeys[uid]
-    if uid in self._in_flight:
-        return
-    self._in_flight.add(uid)
-    try:
-        self._resp_proc.process(item, miner_hotkey=miner_hotkey)
-    finally:
-        self._in_flight.discard(uid)
-        self._weight_mgr.update()
-        self._cursor.save(uid)
+
+    # weight push
+    self._weight_mgr.update()
 
 
 __all__ = ["forward"]

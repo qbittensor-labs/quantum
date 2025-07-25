@@ -91,7 +91,6 @@ def _service_one_uid(
         return
 
     resp = resp_list[0]
-    print(resp)
 
     # certificates
     total = inserted = 0

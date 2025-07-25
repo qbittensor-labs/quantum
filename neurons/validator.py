@@ -20,7 +20,7 @@ CLEANUP_FLAG = Path("/tmp/validator_cleanup_done")
 
 def _graceful_shutdown(signum, frame):
     bt.logging.info(f"[validator] Received signal {signum}, shutting down gracefully...")
-    stop_updater()
+    #stop_updater()
     try:
         CLEANUP_FLAG.write_text("done")
         bt.logging.info("[validator] Cleanup flag written")
@@ -52,7 +52,7 @@ class Validator(BaseValidatorNeuron):
         bt.logging.info("Validator starting (sync mode)")
 
         # Validator git repo update worker
-        start_updater(check_interval_minutes=5)
+        #start_updater(check_interval_minutes=5)
 
         try:
             while True:
@@ -68,7 +68,7 @@ class Validator(BaseValidatorNeuron):
                     bt.logging.error(f"loop error: {e}", exc_info=True)
         finally:
             bt.logging.info("Stopping auto-updater...")
-            stop_updater()
+            #stop_updater()
             if self.is_running:
                 self.stop_run_thread()
 
