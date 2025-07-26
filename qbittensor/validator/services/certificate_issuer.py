@@ -36,8 +36,8 @@ class CertificateIssuer:
         with open(_WHITELIST_JSON) as f:
             self._whitelist = set(json.load(f)["whitelist"])
         if self.hotkey not in self._whitelist:
-            bt.logging.warning(
-                f"⚠️  Hotkey {self.hotkey} missing from whitelist; miners will reject certs."
+            bt.logging.trace(
+                f"Hotkey {self.hotkey} missing from whitelist; miners will reject certs."
             )
 
     #  Public API
@@ -46,18 +46,20 @@ class CertificateIssuer:
         *,
         challenge_id: str,
         miner_uid: int,
+        circuit_type: str,
         entanglement_entropy: float,
         nqubits: int,
         rqc_depth: int,
     ) -> Certificate:
         """
-        Build, sign, and persist a certificate in the miner’s outbox directory.
+        Build, sign, and persist a certificate in the miner's outbox directory.
         Returns the Certificate object (in case caller needs it for logging).
         """
         cert = Certificate(
             challenge_id=challenge_id,
             validator_hotkey=self.hotkey,
             miner_uid=miner_uid,
+            circuit_type=circuit_type,
             entanglement_entropy=entanglement_entropy,
             nqubits=nqubits,
             rqc_depth=rqc_depth,

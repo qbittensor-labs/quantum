@@ -7,7 +7,11 @@ import json
 from typing import List
 
 import bittensor as bt
-from qbittensor.protocol import ChallengeCircuits
+from qbittensor.protocol import (
+    ChallengeCircuits, #legacy
+    ChallengePeakedCircuit,
+    ChallengeHStabCircuit,
+)
 
 from .solution_processor import Solution
 
@@ -28,6 +32,7 @@ class SolutionExtractor:
             challenge_id=getter("challenge_id", ""),
             solution_bitstring=getter("solution_bitstring", "")
             or getter("miner_solution", ""),
+            circuit_type=getter("circuit_kind", getter("circuit_type", None)),
             difficulty_level=getter("difficulty_level"),
             entanglement_entropy=getter("entanglement_entropy"),
             nqubits=getter("nqubits"),
@@ -37,7 +42,13 @@ class SolutionExtractor:
     @staticmethod
     def extract(resp) -> List[Solution]:
 
-        if isinstance(resp, (ChallengeCircuits)):
+        if isinstance(resp,
+        (
+            ChallengeCircuits, # legacy
+            ChallengePeakedCircuit,
+            ChallengeHStabCircuit,
+        ),
+    ):
             raw = resp.solution_bitstring or getattr(resp, "miner_solution", "") or ""
 
             try:

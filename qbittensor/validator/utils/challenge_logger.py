@@ -21,6 +21,7 @@ _CREATE_CHALLENGES_SQL = """
  CREATE TABLE IF NOT EXISTS challenges (
      id                   INTEGER PRIMARY KEY AUTOINCREMENT,
      challenge_id         TEXT UNIQUE,
+     circuit_type         TEXT,
      validator_hotkey     TEXT,
      miner_uid            INTEGER,
      difficulty_level     REAL,
@@ -35,6 +36,7 @@ _CREATE_SOLUTIONS_SQL = """
  CREATE TABLE IF NOT EXISTS solutions (
      id                   INTEGER PRIMARY KEY AUTOINCREMENT,
      challenge_id         TEXT UNIQUE,
+     circuit_type         TEXT,
      validator_hotkey     TEXT,
      miner_uid            INTEGER,
      miner_hotkey         TEXT,
@@ -50,6 +52,22 @@ _CREATE_SOLUTIONS_SQL = """
  );
 """
 
+_EXTRA_COLUMNS = {
+    "challenges": {"circuit_type": "TEXT"},
+    "solutions" : {"circuit_type": "TEXT"},
+}
+
+def _add_missing_columns(conn):
+    for table, cols in _EXTRA_COLUMNS.items():
+        cursor = conn.cursor()
+        cursor.execute(f"PRAGMA table_info({table});")
+        present = {row[1] for row in cursor.fetchall()}
+        for col, ddl in cols.items():
+            if col not in present:
+                bt.logging.info(f"[logger] ALTER {table} ADD COLUMN {col}")
+                cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl};")
+    conn.commit()
+
 
 def ensure_tables() -> None:
     with sqlite3.connect(_DB_PATH) as conn:
@@ -57,6 +75,7 @@ def ensure_tables() -> None:
         cur.execute(_CREATE_CHALLENGES_SQL)
         cur.execute(_CREATE_SOLUTIONS_SQL)
         conn.commit()
+        _add_missing_columns(conn)
 
 
 ensure_tables()
@@ -65,6 +84,7 @@ ensure_tables()
 _INSERT_CHALLENGE_SQL = """
  INSERT OR IGNORE INTO challenges (
      challenge_id,
+     circuit_type,
      validator_hotkey,
      miner_uid,
      difficulty_level,
@@ -72,12 +92,13 @@ _INSERT_CHALLENGE_SQL = """
      nqubits,
      rqc_depth,
      solution
- ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+ ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
  """
 
 _INSERT_SOLUTION_SQL = """
  INSERT OR IGNORE INTO solutions (
      challenge_id,
+     circuit_type,
      validator_hotkey,
      miner_uid,
      miner_hotkey,
@@ -89,13 +110,14 @@ _INSERT_SOLUTION_SQL = """
      time_received,
      timestamp,
      correct_solution
- ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+ ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 """
 
 
 _INSERT_CERT_AS_SOLUTION_SQL = """
 INSERT OR IGNORE INTO solutions (
     challenge_id,
+    circuit_type,
     validator_hotkey,
     miner_uid,
     miner_hotkey,
@@ -107,7 +129,7 @@ INSERT OR IGNORE INTO solutions (
     time_received,
     timestamp,
     correct_solution
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,1);
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1);
 """
 
 
@@ -130,6 +152,7 @@ def _is_correct(
 def log_challenge(
     *,
     challenge_id: str,
+    circuit_type: str,
     validator_hotkey: str,
     miner_uid: int,
     difficulty_level: float,
@@ -146,6 +169,7 @@ def log_challenge(
             _INSERT_CHALLENGE_SQL,
             (
                 challenge_id,
+                circuit_type,
                 validator_hotkey,
                 miner_uid,
                 difficulty_level,
@@ -162,6 +186,7 @@ def log_challenge(
 def log_solution(
     *,
     challenge_id: str,
+    circuit_type: str,
     validator_hotkey: str,
     miner_uid: int,
     miner_hotkey: str,
@@ -182,6 +207,7 @@ def log_solution(
             _INSERT_SOLUTION_SQL,
             (
                 challenge_id,
+                circuit_type,
                 validator_hotkey,
                 miner_uid,
                 miner_hotkey,
@@ -213,6 +239,7 @@ def log_certificate_as_solution(cert: Certificate, miner_hotkey: str) -> bool:
             _INSERT_CERT_AS_SOLUTION_SQL,
             (
                 cert.challenge_id,
+                cert.circuit_type,
                 cert.validator_hotkey,
                 cert.miner_uid,
                 miner_hotkey,

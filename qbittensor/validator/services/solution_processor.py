@@ -20,6 +20,7 @@ from qbittensor.validator.services.certificate_issuer import CertificateIssuer
 class Solution:
     challenge_id: str
     solution_bitstring: str
+    circuit_type: str | None = None
     difficulty_level: float | None = None
     entanglement_entropy: float | None = None
     nqubits: int | None = None
@@ -46,15 +47,16 @@ class SolutionProcessor:
         """
         ch_row = self._challenge_row(sol.challenge_id)
         if ch_row is None:
-            bt.logging.trace(f"[solution-proc] no challenge row for {sol.challenge_id[:10]}")
+            bt.logging.trace(
+                f"[solution-proc] no challenge row for {sol.challenge_id[:10]}"
+            )
             return False
 
         expected_uid = ch_row["miner_uid"]
         if expected_uid != uid:
-            bt.logging.trace(
-                f"[solution‑proc] UID mismatch"
-            )
+            bt.logging.trace(f"[solution‑proc] UID mismatch")
             return False
+
         is_correct = self._verify(sol.challenge_id, sol.solution_bitstring)
 
         ch_row = self._challenge_row(sol.challenge_id)
@@ -69,6 +71,7 @@ class SolutionProcessor:
                 self._cert_issuer.issue(
                     challenge_id=sol.challenge_id,
                     miner_uid=uid,
+                    circuit_type=sol.circuit_type or _col("circuit_type", "peaked"),
                     entanglement_entropy=_col(
                         "entanglement_entropy", sol.entanglement_entropy or 0.0
                     ),
@@ -83,6 +86,7 @@ class SolutionProcessor:
         try:
             log_solution(
                 challenge_id=sol.challenge_id,
+                circuit_type=sol.circuit_type or _col("circuit_type", "peaked"),
                 validator_hotkey=_col("validator_hotkey", "<unknown>"),
                 miner_uid=uid,
                 miner_hotkey=miner_hotkey,
@@ -121,12 +125,11 @@ class SolutionProcessor:
 
     def allowed_max_difficulty(self, uid: int) -> float:
         """
-        If the miner has never solved a circuit above 0.0, cap = 0.7  
+        If the miner has never solved a circuit above 0.0, cap = 0.7
         Otherwise  cap = (highest_solved + 0.4)
         """
         hi = self.highest_correct_difficulty(uid) or 0.0
         return 0.7 if hi <= 0.0 else hi + 0.4
-
 
     # private
     def _verify(self, cid: str, bitstring: str) -> bool:

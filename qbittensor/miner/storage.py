@@ -33,7 +33,8 @@ class Storage:  # pylint: disable=too-few-public-methods
         for fp in self.p.solved.glob("*.json"):
             try:
                 meta = json.loads(fp.read_text())
-                cid, bits = meta["challenge_id"], meta["peak_bitstring"]
+                cid = meta["challenge_id"]
+                bits = meta.get("solution_bitstring") or meta.get("peak_bitstring", "")
                 self._solved[cid] = bits
 
                 if "validator_hotkey" in meta:
@@ -46,7 +47,7 @@ class Storage:  # pylint: disable=too-few-public-methods
     def save_solution(
         self, cid: str, bitstring: str, validator_hotkey: str = None
     ) -> None:
-        """Persist freshly computed peak bit string to disk."""
+        """Persist computed solution (peak bitstring or stabilizer string) to disk."""
 
         self._solved[cid] = bitstring
         if validator_hotkey:
@@ -54,7 +55,7 @@ class Storage:  # pylint: disable=too-few-public-methods
 
         payload = {
             "challenge_id": cid,
-            "peak_bitstring": bitstring,
+            "solution_bitstring": bitstring,
             "timestamp": time.time(),
         }
         if validator_hotkey:
