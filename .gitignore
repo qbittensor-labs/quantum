@@ -1,1 +1,3 @@
 .DS_Store
+qbittensor/validator/config/difficulty_peaked.json
+qbittensor/validator/config/difficulty_hstab.json

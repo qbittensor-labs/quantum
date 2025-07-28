@@ -169,7 +169,7 @@ class ScoringManager:
         current_time  = datetime.now(timezone.utc)
         cutoff_time   = current_time - timedelta(days=lookback_days)
         decay_const   = math.log(2) / self.half_life_hours            # same half‑life
-        scores_raw    = defaultdict(lambda: {"peaked": 0.0, "hstab": 0.0})
+        scores_raw = defaultdict(lambda: {"peaked": 0.0, "hstab": 0.0})
 
         db = DatabaseManager(self.database_path)
         db.connect()
@@ -228,23 +228,27 @@ class ScoringManager:
         finally:
             db.close()
 
-        # -combine peaked and hstab
+        # 60 / 40 weighting
+        eps = 1e-12  # avoid divide‑by‑zero
+        max_peaked = max((p["peaked"] for p in scores_raw.values()), default=0.0) + eps
+        max_hstab = max((p["hstab"]  for p in scores_raw.values()), default=0.0) + eps
+
         combined = {
-            uid: self.weight_peaked * parts["peaked"]
-            + self.weight_hstab  * parts["hstab"]
+            uid: (
+                self.weight_peaked * (parts["peaked"] / max_peaked) +
+                self.weight_hstab  * (parts["hstab"]  / max_hstab)
+            )
             for uid, parts in scores_raw.items()
         }
 
-        # normalize
-        if combined:
-            max_val = max(combined.values())
-            if max_val > 0:
-                combined = {uid: val / max_val for uid, val in combined.items()}
-            else:
-                combined = {uid: 0.0 for uid in combined}
+        max_blend = max(combined.values(), default=0.0)
+        if max_blend > 0:
+            combined = {uid: val / max_blend for uid, val in combined.items()}
+        else:
+            combined = {uid: 0.0 for uid in combined}
+        print(combined)
 
         return dict(combined)
-
 
     def update_daily_score_history(self) -> None:
         """
