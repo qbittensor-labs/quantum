@@ -181,7 +181,7 @@ class ScoringManager:
                     time_received, correct_solution
                 FROM   solutions
                 WHERE  time_received >= ?
-                AND  circuit_type  = 'peaked'
+                AND  (circuit_type = 'peaked' OR circuit_type IS NULL)
                 ORDER  BY time_received DESC
                 """,
                 (cutoff_time.isoformat(),),
@@ -210,7 +210,7 @@ class ScoringManager:
                 age_h       = (current_time - ts).total_seconds() / 3600.0
                 decay       = math.exp(-decay_const * age_h)
 
-                _, _, base  = self.calculate_single_solution_score(entropy, nqubits, is_correct)
+                base = self.calculate_single_solution_score(entropy, nqubits, is_correct)
                 scores_raw[uid]["peaked"] += base * decay
 
             # process hstab
@@ -246,7 +246,6 @@ class ScoringManager:
             combined = {uid: val / max_blend for uid, val in combined.items()}
         else:
             combined = {uid: 0.0 for uid in combined}
-        print(combined)
 
         return dict(combined)
 

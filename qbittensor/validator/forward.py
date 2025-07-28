@@ -171,7 +171,8 @@ def _refresh_uid_deps(v: "Validator") -> None:
         prev = v._hotkey_cache.get(uid)
         if prev and prev != hk:
             bt.logging.info(f"UID {uid} reassigned {prev} - {hk}; resetting difficulty")
-            v._diff_cfg.set(uid, 0.0)
+            for cfg in v._diff_cfg.values():
+               cfg.set(uid, 0.0)
     v._hotkey_cache = {uid: hk for uid, hk in enumerate(v.metagraph.hotkeys)}
 
     final_uids = sorted(live)
