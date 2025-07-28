@@ -85,21 +85,24 @@ pm2 start --name your_process_name_here "python neurons/miner.py --wallet.name y
 
 ### Configuring Miner Difficulty
 
-Miners can configure their requested difficulty level by editing the `DESIRED_DIFFICULTY` constant in:
+Miners can configure their requested difficulty level with the following command line arguments
 ```
-neurons/miner.py
+--difficulty_peaked <FLOAT>
+--difficulty_hstab <FLOAT>
 ```
 
-```python
-DESIRED_DIFFICULTY: float = 0.0  # Change this value to your desired difficulty
-```
-The default miner will not be able to handle larger circuits than 32 qubits. It's up to you to develop novel and cutting edge approaches to running larger circuits!
+The float value for peaked circuits represents the desired difficulty; the float value for hstab circuits represents the desired qubit number.
 
-**Difficulty Levels:**
+The default miner will not be able to handle larger circuits for both challenges. It's up to you to develop novel and cutting edge approaches to running larger circuits!
+
+**Difficulty Levels for Peaked Circuits:**
 - `0`: Default difficulty
 - `1` and above: Progressively harder circuits
 
 Miners are only able to increase their difficulty in increments. You may go from 0.0 to 0.7, and then up in increments of 0.4 once proving you can solve larger and larger circuits.
+
+**Difficulty Levels for Hidden Stabilizer Circuits:**
+Miners request a specific qubit number.
 
 > **warning** The lowest difficulty already produces 31 qubit circuits. High difficulties will likely cause OOM errors, you must implement your own simulation stack to handle large qubit counts efficiently!
 

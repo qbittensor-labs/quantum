@@ -26,6 +26,7 @@ class DifficultyConfig:
         *,
         db_path: Path | None = None,
         hotkey_lookup: HotkeyLookup | None = None,
+        clamp: bool = True,
     ):
  
         self._path = path
@@ -35,6 +36,7 @@ class DifficultyConfig:
         self._table: Dict[int, float] = self._load()
         self._db_path       = db_path
         self._hotkey_lookup = hotkey_lookup
+        self._clamp         = clamp
 
     def get(self, uid: int) -> float:
         """Retrieve the difficulty for a given UID (falls back to default if missing)."""
@@ -66,7 +68,8 @@ class DifficultyConfig:
             if value <= current:
                 new_val = value
 
-            # upward moves restrictions
+            elif not self._clamp:
+                new_val = value
             else:
                 # Anything ≤ 0.7 is always allowed
                 if value <= self.UNRESTRICTED_CEILING:

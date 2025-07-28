@@ -7,7 +7,8 @@ import json
 from typing import Any, Dict, List, Optional
 
 import bittensor as bt
-from pydantic import BaseModel, Field
+from pydantic import Field
+from typing import Any, Dict, List, Optional, Literal
 
 
 class _CircuitSynapseBase(bt.Synapse):
@@ -22,16 +23,28 @@ class _CircuitSynapseBase(bt.Synapse):
     )
 
     # deterministic challenge ID / difficulty
-    challenge_id: Optional[str]  = Field(None, description="SHA-256 hash of the unsigned challenge payload")
-    difficulty_level: Optional[float] = Field(None, description="Difficulty assigned by the validator")
+    challenge_id: Optional[str] = Field(
+        None, description="SHA-256 hash of the unsigned challenge payload"
+    )
+    difficulty_level: Optional[float] = Field(
+        None, description="Difficulty assigned by the validator"
+    )
 
     # circuit payload & miner fields
-    circuit_data:        Optional[str] = Field(None, description="Serialized QASM of the circuit")
-    solution_bitstring:  Optional[str] = Field(None, description="Miners bitstring solution")
+    circuit_data: Optional[str] = Field(
+        None, description="Serialized QASM of the circuit"
+    )
+    solution_bitstring: Optional[str] = Field(
+        None, description="Miners bitstring solution"
+    )
 
     # gossip: completion certificates & feedback
-    certificates_json:   Optional[str] = Field(default=None, description="Optional JSON batch of certificates")
-    desired_difficulty:  Optional[float] = Field(None, description="Miner-suggested difficulty")
+    certificates_json: Optional[str] = Field(
+        default=None, description="Optional JSON batch of certificates"
+    )
+    desired_difficulty: Optional[float] = Field(
+        None, description="Miner-suggested difficulty"
+    )
 
     # populated during deserialization ↴
     certificates: List[Dict[str, Any]] = Field(default_factory=list, exclude=True)
@@ -50,9 +63,9 @@ class _CircuitSynapseBase(bt.Synapse):
         Return a python list of certificate dicts.
         Works both before and after deserialization.
         """
-        if self.certificates: # populated by deserialize()
+        if self.certificates:  # populated by deserialize()
             return self.certificates
-        if not self.certificates_json: # raw string not yet parsed
+        if not self.certificates_json:  # raw string not yet parsed
             return []
         try:
             blob = json.loads(self.certificates_json)
@@ -75,7 +88,20 @@ class _CircuitSynapseBase(bt.Synapse):
         return self
 
 
-# Validator -> Miner
+class ChallengePeakedCircuit(_CircuitSynapseBase):
+    """
+    Peaked circuit challenge.
+    """
+    circuit_kind: Literal["peaked"] = "peaked"
+
+
+class ChallengeHStabCircuit(_CircuitSynapseBase):
+    """
+    Hstabiliser circuit challenge.
+    """
+    circuit_kind: Literal["hstab"] = "hstab"
+
+
+# legacy circuit
 class ChallengeCircuits(_CircuitSynapseBase):
-    """Validator sends a single QASM challenge with empty fields for miner response."""
     pass

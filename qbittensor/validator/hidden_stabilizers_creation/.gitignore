@@ -1,0 +1,5 @@
+*.png
+*.npz
+.venv
+**/__pycache__/*
+*.qasm

@@ -52,6 +52,9 @@ class ScoringManager:
         self.knee = 32  # Knee point qubits
         self.min_score = 0.15  # Min score
         self.half_life_hours = 72.0
+        self.weight_peaked = 0.4
+        self.weight_hstab  = 0.6
+        self.hstab_exp     = 1.7
 
         bt.logging.info("ScoringManager initialized")
 
@@ -120,6 +123,15 @@ class ScoringManager:
 
         normalized = entropy / Smax
         return max(0.0, min(1.0, normalized))
+    
+    def _hstab_score(self, nqubits: int, is_correct: bool) -> float:
+        """
+        Score for an individual *hstab* solution.
+        nqubits^1.7
+        """
+        if not is_correct or nqubits is None or nqubits <= 0:
+            return 0.0
+        return float(nqubits) ** self.hstab_exp
 
     def calculate_combined_score(self, entropy: float, nqubits: int) -> Tuple[float, float, float]:
         """
@@ -154,76 +166,85 @@ class ScoringManager:
         return combined_score
 
     def calculate_decayed_scores(self, lookback_days: int = 3) -> Dict[int, float]:
-        """
-        Calculates time-decayed scores for all miners based on their correct solutions
-        within a specified lookback period. Scores are normalized to a maximum of 1.0.
-        Scores are calculated on-the-fly from stored entropy and qubit count.
-
-        Parameters:
-        - lookback_days: The number of days to look back for solutions to include in scoring.
-
-        Returns:
-        - Dict[int, float]: A dictionary mapping miner UIDs to their normalized decayed scores.
-        """
-        current_time = datetime.now(timezone.utc)
-        cutoff_time = current_time - timedelta(days=lookback_days)
-        decay_constant = math.log(2) / self.half_life_hours
-        scores: Dict[int, float] = defaultdict(float)
+        current_time  = datetime.now(timezone.utc)
+        cutoff_time   = current_time - timedelta(days=lookback_days)
+        decay_const   = math.log(2) / self.half_life_hours            # same half‑life
+        scores_raw    = defaultdict(lambda: {"peaked": 0.0, "hstab": 0.0})
 
         db = DatabaseManager(self.database_path)
         db.connect()
         try:
-            rows = db.fetch_all(
+            # PEAKED rows
+            rows_peaked = db.fetch_all(
                 """
-                SELECT miner_uid, entanglement_entropy, nqubits, time_received, correct_solution
-                FROM solutions
-                WHERE time_received >= ?
-                ORDER BY time_received DESC
+                SELECT miner_uid, entanglement_entropy, nqubits,
+                    time_received, correct_solution
+                FROM   solutions
+                WHERE  time_received >= ?
+                AND  circuit_type  = 'peaked'
+                ORDER  BY time_received DESC
                 """,
                 (cutoff_time.isoformat(),),
             )
 
-            bt.logging.info(f"[scoring] Processing {len(rows)} solution records for decayed scores.")
+            # HSTAB rows
+            rows_hstab = db.fetch_all(
+                """
+                SELECT miner_uid, nqubits,
+                    time_received, correct_solution
+                FROM   solutions
+                WHERE  time_received >= ?
+                AND  circuit_type  = 'hstab'
+                ORDER  BY time_received DESC
+                """,
+                (cutoff_time.isoformat(),),
+            )
 
-            for row in rows:
-                miner_uid = row["miner_uid"]
-                entropy = row["entanglement_entropy"]
-                nqubits = row["nqubits"]
-                is_correct = row["correct_solution"] == 1
-                timestamp_str = row["time_received"]
+            # process peaked
+            for row in rows_peaked:
+                uid         = row["miner_uid"]
+                entropy     = row["entanglement_entropy"]
+                nqubits     = row["nqubits"]
+                is_correct  = row["correct_solution"] == 1
+                ts          = datetime.fromisoformat(row["time_received"]).replace(tzinfo=timezone.utc)
+                age_h       = (current_time - ts).total_seconds() / 3600.0
+                decay       = math.exp(-decay_const * age_h)
 
-                combined_score = self.calculate_single_solution_score(entropy, nqubits, is_correct)
+                _, _, base  = self.calculate_single_solution_score(entropy, nqubits, is_correct)
+                scores_raw[uid]["peaked"] += base * decay
 
-                if combined_score > 0:
-                    try:
-                        score_time = datetime.fromisoformat(timestamp_str)
-                        if score_time.tzinfo is None:
-                            score_time = score_time.replace(tzinfo=timezone.utc)
-                    except ValueError:
-                        bt.logging.warning(f"Could not parse timestamp {timestamp_str}. Skipping score.")
-                        continue
+            # process hstab
+            for row in rows_hstab:
+                uid         = row["miner_uid"]
+                nqubits     = row["nqubits"]
+                is_correct  = row["correct_solution"] == 1
+                ts          = datetime.fromisoformat(row["time_received"]).replace(tzinfo=timezone.utc)
+                age_h       = (current_time - ts).total_seconds() / 3600.0
+                decay       = math.exp(-decay_const * age_h)
 
-                    age_hours = (current_time - score_time).total_seconds() / 3600.0  # Age of the solution in hours
-                    decay_factor = math.exp(-decay_constant * age_hours)
-                    decayed_score = combined_score * decay_factor
+                base        = self._hstab_score(nqubits, is_correct)
+                scores_raw[uid]["hstab"] += base * decay
 
-                    scores[miner_uid] += decayed_score
-
-        except sqlite3.Error as e:
-            bt.logging.error(f"[scoring] Database error during decayed score calculation: {e}")
         finally:
             db.close()
 
-        if scores:
-            max_score = max(scores.values())
-            if max_score > 0:
-                scores = {uid: score / max_score for uid, score in scores.items()}
-            else:
-                bt.logging.warning("[scoring] Max decayed score is 0, cannot normalize. All scores will be 0.")
-                scores = {uid: 0.0 for uid in scores}
+        # -combine peaked and hstab
+        combined = {
+            uid: self.weight_peaked * parts["peaked"]
+            + self.weight_hstab  * parts["hstab"]
+            for uid, parts in scores_raw.items()
+        }
 
-        bt.logging.info(f"[scoring] Calculated normalized decayed scores for {len(scores)} miners.")
-        return dict(scores)
+        # normalize
+        if combined:
+            max_val = max(combined.values())
+            if max_val > 0:
+                combined = {uid: val / max_val for uid, val in combined.items()}
+            else:
+                combined = {uid: 0.0 for uid in combined}
+
+        return dict(combined)
+
 
     def update_daily_score_history(self) -> None:
         """

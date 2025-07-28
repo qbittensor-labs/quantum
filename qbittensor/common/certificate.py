@@ -1,9 +1,9 @@
 """
-Dataclass + helpers shared by both validator and miner.
+Certificate helpers shared by both validator and miner.
 """
 
 from __future__ import annotations
-import hashlib, json, datetime as dt
+import json, datetime as dt
 from typing import ClassVar, Dict
 from pydantic import BaseModel, Field, validator
 import bittensor as bt
@@ -16,6 +16,11 @@ class Certificate(BaseModel):
     challenge_id: str
     validator_hotkey: str
     miner_uid: int
+    circuit_type: str = Field(
+        default="peaked",
+        pattern="^(peaked|hstab)$",
+        description="Quantum circuit type: 'peaked' or 'hstab'"
+    )
     entanglement_entropy: float
     nqubits: int
     rqc_depth: int
@@ -35,6 +40,7 @@ class Certificate(BaseModel):
         "challenge_id",
         "validator_hotkey",
         "miner_uid",
+        "circuit_type",
         "entanglement_entropy",
         "nqubits",
         "rqc_depth",
@@ -57,7 +63,7 @@ class Certificate(BaseModel):
 
     def verify(self) -> bool:
         """
-        True  -> signature matches validator_hotkey
+        True -> signature matches validator_hotkey
         False -> unsigned, malformed address, bad hex, or bad signature
         """
         if not self.signature:
