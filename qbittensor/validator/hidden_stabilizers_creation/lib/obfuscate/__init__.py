@@ -92,6 +92,7 @@ def optim_decomp(
     decomp: Decomp,
     target: np.ndarray[complex, 2],
     epsilon: Optional[float] = 1e-6,
+    max_tries: int = 10,
 ) -> np.ndarray[float, 1]:
     """
     Compute a decomposition of `target` using `scipy.optimize`, given an
@@ -106,18 +107,34 @@ def optim_decomp(
             Matrix to decompose.
         epsilon (Optional[float]):
             Tolerance value for optimization.
+        max_tries (int):
+            Maximum number of calls to scipy for decomposition before failing
+            with `RuntimeError`.
 
     Returns:
         params (numpy.ndarray[float, 1]):
             1D array of final parameter values for the decomposition.
+
+    Raises:
+        RuntimeError:
+            - scipy.optimize fails to satisfy error tolerance `epsilon` more
+              than `max_tries` times.
     """
-    params0 = 2 * np.pi * gen.random(size=decomp.num_params())
-    optim = minimize(
-        lambda params, targ, decomp: -decomp.fidelity(targ, params),
-        params0,
-        args=(target, decomp),
-        tol=epsilon,
-        options=dict(maxiter=10000),
-    )
-    return optim.x
+    # scipy.optimize will sometimes get stuck in local minima; just sticking
+    # this in a loop should be fine (really shouldn't need more than 2-3 iters,
+    # tops)
+    for _ in range(max_tries):
+        params0 = 2 * np.pi * gen.random(size=decomp.num_params())
+        optim = minimize(
+            lambda params, targ, decomp: -decomp.fidelity(targ, params),
+            params0,
+            args=(target, decomp),
+            tol=epsilon,
+            options=dict(maxiter=10000),
+        )
+        final_fidelity = decomp.fidelity(target, optim.x)
+        if optim.success and abs(final_fidelity - 1) < epsilon:
+            return optim.x
+    raise RuntimeError(
+        f"optim_decomp: got stuck in local minima >{max_tries} times")
 
