@@ -34,7 +34,7 @@ _cleanup = CertificateCleanup(
     cert_dir=_CERT_DIR,
     historical_dir=_OLD_CERT_DIR,
     archive_after_hours=12,
-    delete_after_days=None,
+    delete_after_days=2,
     cleanup_interval_minutes=60,
 )
 
