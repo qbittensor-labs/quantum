@@ -13,6 +13,7 @@ from qbittensor.miner.services.circuit_solver import CircuitSolver
 from qbittensor.miner.services.synapse_assembler import SynapseAssembler
 from qbittensor.protocol import ChallengePeakedCircuit, ChallengeHStabCircuit, _CircuitSynapseBase
 from qbittensor.miner.services.certificate_verifier import CertificateVerifier
+from qbittensor.miner.services.solution_archiver import SolutionArchiver
 from qbittensor.miner.services.certificate_cleanup import CertificateCleanup
 
 CircuitSynapse = Union[ChallengePeakedCircuit, ChallengeHStabCircuit]
@@ -38,6 +39,18 @@ _cleanup = CertificateCleanup(
     cleanup_interval_minutes=60,
 )
 
+_ARCHIVE_DIR = _BASE_DIR / "old_solved_circuits"
+solution_archiver = SolutionArchiver(
+    solved_dirs=[
+        _BASE_DIR / "solved_circuits",
+        _BASE_DIR / "peaked_circuits" / "solved_circuits",
+        _BASE_DIR / "hstab_circuits"  / "solved_circuits",
+    ],
+    cert_dir=_CERT_DIR,
+    archive_dir=_ARCHIVE_DIR,
+    cleanup_interval_minutes=60,
+)
+
 # Solver registry
 SOLVERS = {
     ChallengePeakedCircuit: _circuit_solver,
@@ -54,6 +67,7 @@ def _handle_challenge(syn: CircuitSynapse) -> CircuitSynapse:
     """routes to appropriate solver based on synapse type."""
     # cleanup old certs
     _cleanup.run_cleanup_if_needed()
+    solution_archiver.run_if_needed()
 
     # verify certificates just received
     received = _verifier.validate_batch(syn)
