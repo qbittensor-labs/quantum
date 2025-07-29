@@ -60,7 +60,7 @@ class WeightManager:
                 return  # still update timestamp below
 
             scores = self.validator._scoring_mgr.calculate_decayed_scores(
-                lookback_days=3
+                lookback_days=2
             )
             if not scores:
                 bt.logging.warning("No scores available for weight calculation")

@@ -177,7 +177,7 @@ class ScoringManager:
         _, _, combined_score = self.calculate_combined_score(entropy, nqubits)
         return combined_score
 
-    def calculate_decayed_scores(self, lookback_days: int = 3) -> Dict[int, float]:
+    def calculate_decayed_scores(self, lookback_days: int = 2) -> Dict[int, float]:
         current_time = datetime.now(timezone.utc)
         cutoff_time = current_time - timedelta(days=lookback_days)
         decay_const = math.log(2) / self.half_life_hours  # same half‑life
