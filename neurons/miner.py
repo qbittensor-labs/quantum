@@ -196,7 +196,8 @@ class Miner(BaseMinerNeuron):
             priority_fn=self.priority_hstab,
         )
 
-        # Start the axon server
+        bt.logging.info(f"Serving miner axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}")
+        self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor)
         self.axon.start()
 
         # Log startup

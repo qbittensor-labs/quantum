@@ -38,7 +38,9 @@ class SolverWorker:
         self.storage = Storage(self.paths)
         self._solve = solver_fn
         self._scan_interval = scan_interval
-        self._queue: "queue.Queue[Tuple[str, str, str, str]]" = queue.Queue(maxsize=queue_size)
+        self._queue: "asyncio.Queue[Tuple[str, str, str, str]]" = asyncio.Queue(
+            maxsize=queue_size
+        )  # (cid, qasm, circuit_type, validator_hotkey)
         self._thread_name = thread_name
         self._running = False
 
@@ -79,7 +81,7 @@ class SolverWorker:
             bt.logging.debug(
                 f" queued {circuit_type} circuit {cid[:10]} from validator {validator_hotkey[:10] if validator_hotkey else 'unknown'}"
             )
-        except queue.Full:
+        except asyncio.QueueFull:
             bt.logging.warning(" solver queue full. dropping challenge")
 
     # Thread bootstrap
@@ -101,9 +103,10 @@ class SolverWorker:
         self._scan_unsolved_dir()  # once on start‑up
         while True:
             try:
-                # Use thread-safe queue with timeout
-                cid, qasm, circuit_type, validator_hotkey = self._queue.get(timeout=self._scan_interval)
-            except queue.Empty:
+                cid, qasm, circuit_type, validator_hotkey = await asyncio.wait_for(
+                    self._queue.get(), timeout=self._scan_interval
+                )
+            except asyncio.TimeoutError:
                 self._scan_unsolved_dir()
                 continue
 

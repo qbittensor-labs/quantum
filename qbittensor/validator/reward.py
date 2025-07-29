@@ -266,7 +266,6 @@ class ScoringManager:
             combined = {uid: val / max_blend for uid, val in combined.items()}
         else:
             combined = {uid: 0.0 for uid in combined}
-        print(combined)
 
         return dict(combined)
 
