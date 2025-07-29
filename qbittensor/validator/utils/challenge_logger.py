@@ -165,6 +165,7 @@ def log_challenge(
     db = DatabaseManager(_DB_PATH)
     db.connect()
     try:
+        miner_uid = int(miner_uid) if not isinstance(miner_uid, int) else miner_uid
         db.execute_query(
             _INSERT_CHALLENGE_SQL,
             (

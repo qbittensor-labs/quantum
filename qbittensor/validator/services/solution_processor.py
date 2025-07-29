@@ -53,6 +53,8 @@ class SolutionProcessor:
             return False
 
         expected_uid = ch_row["miner_uid"]
+        if isinstance(expected_uid, bytes):
+            expected_uid = int.from_bytes(expected_uid, byteorder='little')
         if expected_uid != uid:
             bt.logging.trace(f"[solution‑proc] UID mismatch")
             return False
