@@ -5,7 +5,8 @@ Certificates that pass can be written to disk, added to local score, etc.
 """
 
 from __future__ import annotations
-import json, pathlib, datetime as dt
+import json, pathlib
+from datetime import datetime, timezone
 from typing import List
 import bittensor as bt
 
@@ -63,6 +64,22 @@ class CertificateVerifier:
         write accepted certs to disk (one JSON per file).
         """
         directory.mkdir(parents=True, exist_ok=True)
-        for c in certs:
-            fname = directory / f"{c.challenge_id}__{c.validator_hotkey}.json"
-            fname.write_text(c.model_dump_json())
+        hist_dir = directory.parent / "old_certificates"
+
+        # build a quick lookup of already‑archived CIDs (filenames start with cid__)
+        archived_cids = {p.name.split("__", 1)[0] for p in hist_dir.glob("*.json")}
+
+        for cert in certs:
+            cid = cert.challenge_id # Certificate attribute
+
+            # skip if present in live dir or in archive
+            if (directory / f"{cid}.json").exists() or cid in archived_cids:
+                continue
+
+            # ensure timestamp field is present and in UTC
+            if not getattr(cert, "timestamp", None):
+                cert.timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+            # convert to plain dict before dumping
+            payload = cert.__dict__ if isinstance(cert, Certificate) else cert
+            (directory / f"{cid}.json").write_text(json.dumps(payload))
