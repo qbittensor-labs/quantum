@@ -101,7 +101,6 @@ class Storage:  # pylint: disable=too-few-public-methods
                 validator_hotkey
                 and self._challenge_validators.get(cid) != validator_hotkey
             ):
-                bt.logging.info("sol for different val, skipping")
                 continue
 
             output.append((cid, bitstring))
