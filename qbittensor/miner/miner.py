@@ -27,11 +27,7 @@ for subdir in ("solved_circuits", "unsolved_circuits", "peaked_circuits", "peake
     (_BASE_DIR / subdir).mkdir(parents=True, exist_ok=True)
 
 _verifier = CertificateVerifier()
-
-# Different solvers for different circuit types
-_peaked_solver = CircuitSolver(base_dir=_BASE_DIR / "peaked_circuits")
-_hstab_solver = CircuitSolver(base_dir=_BASE_DIR / "hstab_circuits")
-_legacy_solver = CircuitSolver(base_dir=_BASE_DIR)
+_circuit_solver = CircuitSolver(base_dir=_BASE_DIR)
 
 _assembler = SynapseAssembler()
 _cleanup = CertificateCleanup(
@@ -44,13 +40,13 @@ _cleanup = CertificateCleanup(
 
 # Solver registry
 SOLVERS = {
-    ChallengePeakedCircuit: _peaked_solver,
-    ChallengeHStabCircuit: _hstab_solver,
+    ChallengePeakedCircuit: _circuit_solver,
+    ChallengeHStabCircuit: _circuit_solver,
 }
 
 def _get_solver_for_synapse(syn: CircuitSynapse) -> CircuitSolver:
     """Get the appropriate solver based on synapse type."""
-    solver = SOLVERS.get(type(syn), _legacy_solver)
+    solver = SOLVERS.get(type(syn), _circuit_solver)
     bt.logging.debug(f"Using {solver} for synapse type {type(syn).__name__}")
     return solver
 
@@ -69,14 +65,11 @@ def _handle_challenge(syn: CircuitSynapse) -> CircuitSynapse:
             f"from {syn.validator_hotkey or '<?>'} in {save_to}"
         )
 
-    # Get the appropriate solver for this synapse type
     solver = _get_solver_for_synapse(syn)
     
-    # only give back solutions that belong to this validator
     validator = getattr(syn, "validator_hotkey", None)
     ready = solver.drain(n=100, validator_hotkey=validator)
 
-    # queue the circuit for background solving
     solver.submit(syn)
     
     circuit_type = getattr(syn, 'circuit_kind', type(syn).__name__)
@@ -90,13 +83,11 @@ def _handle_challenge(syn: CircuitSynapse) -> CircuitSynapse:
 
 def _handle_peaked_challenge(syn: ChallengePeakedCircuit) -> ChallengePeakedCircuit:
     """handler for peaked circuits"""
-    # add peaked-specific logic here
     bt.logging.trace("Handling peaked circuit")
     return _handle_challenge(syn)
 
 def _handle_hstab_challenge(syn: ChallengeHStabCircuit) -> ChallengeHStabCircuit:
     """handler for H-stabilizer circuits"""
-    # add H-stab specific logic here
     bt.logging.trace("Handling H-stab circuit")
     return _handle_challenge(syn)
 
@@ -108,14 +99,11 @@ def solve_challenge_sync(s: CircuitSynapse, *, wallet) -> CircuitSynapse:
     elif isinstance(s, ChallengeHStabCircuit):
         return _handle_hstab_challenge(s)
     else:
-        # Fallback to generic handler
         bt.logging.warning(f"Unknown synapse type {type(s)}, using generic handler")
         return _handle_challenge(s)
 
-# Specific handlers for direct use if needed
 handle_peaked_circuit = lambda s, *, wallet: _handle_peaked_challenge(s)
 handle_hstab_circuit = lambda s, *, wallet: _handle_hstab_challenge(s)
 
-# Legacy alias to maintain compatibility
 _solve_challenge_sync = solve_challenge_sync
-handle_challenge_circuits = solve_challenge_sync  # Now handles all circuit types
+handle_challenge_circuits = solve_challenge_sync

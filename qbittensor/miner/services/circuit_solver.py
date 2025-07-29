@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+import functools
 
 import bittensor as bt
 from qbittensor.miner.solver_worker import SolverWorker
@@ -7,15 +8,31 @@ from qbittensor.miner.solvers.default_peaked_solver import DefaultPeakedSolver
 from qbittensor.miner.solvers.default_hstab_solver import DefaultHStabSolver
 
 
+def _execute_solve_in_process(qasm: str, circuit_type: str, solvers: dict) -> str:
+    try:
+        if circuit_type not in solvers:
+            return ""
+
+        solution = solvers[circuit_type].solve(qasm)
+
+        if not isinstance(solution, str):
+            return ""
+        return solution
+    except Exception:
+        return ""
+
+
 class CircuitSolver:
     def __init__(self, base_dir):
-        self._worker = SolverWorker(base_dir=base_dir, solver_fn=self._solve)
-        self._worker.start()
         self._custom_peaked_solver, self._custom_hstab_solver = self._detect_custom()
         self._solvers = {
             'peaked': self._custom_peaked_solver or DefaultPeakedSolver(),
             'hstab': self._custom_hstab_solver or DefaultHStabSolver()
         }
+        
+        solve_fn_for_worker = functools.partial(_execute_solve_in_process, solvers=self._solvers)
+        self._worker = SolverWorker(base_dir=base_dir, solver_fn=solve_fn_for_worker)
+        self._worker.start()
 
     def _detect_custom(self):
         """Detect both custom peaked and hstab solvers."""

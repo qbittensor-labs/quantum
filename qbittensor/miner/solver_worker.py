@@ -10,6 +10,8 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Tuple
+from concurrent.futures import ProcessPoolExecutor
+import multiprocessing as mp
 
 import bittensor as bt
 
@@ -43,6 +45,10 @@ class SolverWorker:
         )  # (cid, qasm, circuit_type, validator_hotkey)
         self._thread_name = thread_name
         self._running = False
+        self.executor = ProcessPoolExecutor(mp_context=mp.get_context("spawn"))
+
+    def __del__(self):
+        self.executor.shutdown(wait=True)
 
     def start(self) -> None:
         if self._running:
@@ -113,7 +119,8 @@ class SolverWorker:
             bt.logging.debug(
                 f" solving {circuit_type} circuit {cid[:10]} from validator {validator_hotkey[:10] if validator_hotkey else 'unknown'}"
             )
-            bits = await asyncio.to_thread(self._solve, qasm, circuit_type)
+            loop = asyncio.get_running_loop()
+            bits = await loop.run_in_executor(self.executor, self._solve, qasm, circuit_type)
             bt.logging.debug(f" {cid[:10]} → {bits}")
             self.storage.save_solution(cid, bits, validator_hotkey or None)
             self._queue.task_done()
