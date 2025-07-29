@@ -3,7 +3,7 @@ from __future__ import annotations
 import json, time
 from pathlib import Path
 import bittensor as bt
-from datetime import datetime
+from datetime import datetime, timezone
 
 class SolutionArchiver:
     """
@@ -38,6 +38,7 @@ class SolutionArchiver:
 
     def run(self) -> None:
         moved = errs = 0
+        now   = time.time()
         cids_with_cert = self._collect_cert_cids()
 
         for solved_dir in self.solved_dirs:
