@@ -12,9 +12,9 @@ if TYPE_CHECKING:  # avoid a hard import cycle
     from qbittensor.validator import Validator
 
 # CONSTANTS
-SCORING_INTERVAL = 15 * 60 # every 15 min
-WEIGHT_SETTING_INTERVAL = 20 * 60 # every 30 min
-MIN_WEIGHT = 0.0001 # floor weight for active miners
+SCORING_INTERVAL = 15 * 60  # every 15 min
+WEIGHT_SETTING_INTERVAL = 20 * 60  # every 30 min
+MIN_WEIGHT = 0.0001  # floor weight for active miners
 
 
 class WeightManager:
@@ -57,14 +57,14 @@ class WeightManager:
                 )
             except ValueError:
                 bt.logging.warning("Hotkey not found in metagraph")
-                return # still update timestamp below
+                return  # still update timestamp below
 
             scores = self.validator._scoring_mgr.calculate_decayed_scores(
-                lookback_days=2
+                lookback_days=3
             )
             if not scores:
                 bt.logging.warning("No scores available for weight calculation")
-                return # still update timestamp below
+                return  # still update timestamp below
 
             weights = torch.zeros(len(self.validator.metagraph.uids))
             for uid_, score in scores.items():
@@ -75,15 +75,17 @@ class WeightManager:
             if total > 0:
                 weights /= total
 
-            bt.logging.info(f"Setting weights for { (weights > 0).sum().item() } miners")
+            bt.logging.info(
+                f"Setting weights for { (weights > 0).sum().item() } miners"
+            )
 
             result = self.validator.subtensor.set_weights(
-                wallet = self.validator.wallet,
-                netuid = self.validator.config.netuid,
-                uids = self.validator.metagraph.uids,
-                weights = weights,
-                wait_for_inclusion = True,
-                wait_for_finalization= False,
+                wallet=self.validator.wallet,
+                netuid=self.validator.config.netuid,
+                uids=self.validator.metagraph.uids,
+                weights=weights,
+                wait_for_inclusion=True,
+                wait_for_finalization=False,
             )
 
             if result and result[0]:

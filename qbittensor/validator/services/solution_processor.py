@@ -106,7 +106,7 @@ class SolutionProcessor:
             )
         return is_correct
 
-    def highest_correct_difficulty(self, uid: int) -> float | None:
+    def highest_correct_difficulty(self, uid: int, circuit_type: str) -> float | None:
         """Return the greatest difficulty this miner has solved correctly."""
         with sqlite3.connect(self._db_path) as conn:
             conn.row_factory = sqlite3.Row
@@ -115,6 +115,7 @@ class SolutionProcessor:
                 SELECT MAX(difficulty_level) AS max_difficulty
                   FROM solutions
                  WHERE miner_uid = ?
+                   AND circuit_type = ?
                    AND correct_solution = 1
                 """,
                 (uid,),
@@ -123,12 +124,12 @@ class SolutionProcessor:
         val = row["max_difficulty"] if row else None
         return float(val) if val is not None else None
 
-    def allowed_max_difficulty(self, uid: int) -> float:
+    def allowed_max_difficulty(self, uid: int, circuit_type: str) -> float:
         """
         If the miner has never solved a circuit above 0.0, cap = 0.7
         Otherwise  cap = (highest_solved + 0.4)
         """
-        hi = self.highest_correct_difficulty(uid) or 0.0
+        hi = self.highest_correct_difficulty(uid, circuit_type) or 0.0
         return 0.7 if hi <= 0.0 else hi + 0.4
 
     # private
