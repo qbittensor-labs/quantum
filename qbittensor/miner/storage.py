@@ -30,24 +30,40 @@ class Storage:  # pylint: disable=too-few-public-methods
 
     def _bootstrap(self) -> None:
         """Scan existing files so we survive restarts gracefully."""
-        for fp in self.p.solved.glob("*.json"):
-            try:
-                meta = json.loads(fp.read_text())
-                cid = meta["challenge_id"]
-                bits = meta.get("solution_bitstring") or meta.get("peak_bitstring", "")
-                self._solved[cid] = bits
+        for folder in (self.p.solved_root, self.p.solved_peaked, self.p.solved_hstab):
+            for fp in folder.glob("*.json"):
+                try:
+                    meta = json.loads(fp.read_text())
+                    cid = meta["challenge_id"]
+                    bits = meta.get("solution_bitstring") or meta.get(
+                        "peak_bitstring", ""
+                    )
+                    self._solved[cid] = bits
 
-                if "validator_hotkey" in meta:
-                    self._challenge_validators[cid] = meta["validator_hotkey"]
-            except Exception:
-                bt.logging.debug(f"Storage bootstrap.bad solution file {fp.name}")
-                continue
+                    if "validator_hotkey" in meta:
+                        self._challenge_validators[cid] = meta["validator_hotkey"]
+                except Exception:
+                    bt.logging.debug(f"Storage bootstrap.bad solution file {fp.name}")
+                    continue
 
     # Public API – solutions
     def save_solution(
-        self, cid: str, bitstring: str, validator_hotkey: str = None
+        self,
+        cid: str,
+        bitstring: str,
+        circuit_type: str,
+        validator_hotkey: str | None = None,
     ) -> None:
         """Persist computed solution (peak bitstring or stabilizer string) to disk."""
+
+        if circuit_type == "hstab":
+            target_dir = self.p.solved_hstab
+        elif circuit_type == "peaked":
+            target_dir = self.p.solved_peaked
+        else:
+            target_dir = self.p.solved_root
+
+        target_dir.mkdir(parents=True, exist_ok=True)
 
         self._solved[cid] = bitstring
         if validator_hotkey:
@@ -61,7 +77,7 @@ class Storage:  # pylint: disable=too-few-public-methods
         if validator_hotkey:
             payload["validator_hotkey"] = validator_hotkey
 
-        (self.p.solved / f"{cid}.json").write_text(json.dumps(payload))
+        (target_dir / f"{cid}.json").write_text(json.dumps(payload))
 
         # House‑keeping – remove unsolved scraps
         for fp in self.p.unsolved.glob(f"{cid}*"):
@@ -81,7 +97,10 @@ class Storage:  # pylint: disable=too-few-public-methods
                 break
 
             # skip if caller asked for a specific validator and this CID belongs to another
-            if validator_hotkey and self._challenge_validators.get(cid) != validator_hotkey:
+            if (
+                validator_hotkey
+                and self._challenge_validators.get(cid) != validator_hotkey
+            ):
                 bt.logging.info("sol for different val, skipping")
                 continue
 

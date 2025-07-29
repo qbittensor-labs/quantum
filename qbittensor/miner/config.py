@@ -21,7 +21,9 @@ class Paths:
 
     base: Path
     unsolved: Path
-    solved: Path
+    solved_root: Path
+    solved_peaked: Path
+    solved_hstab: Path
 
     @classmethod
     def from_base(cls, base: Path) -> "Paths":
@@ -29,5 +31,7 @@ class Paths:
         return cls(
             base=base,
             unsolved=base / "unsolved_circuits",
-            solved=base / "solved_circuits",
+            solved_root=base / "solved_circuits",
+            solved_peaked=base / "peaked_circuits" / "solved_circuits",
+            solved_hstab=base / "hstab_circuits" / "solved_circuits",
         )

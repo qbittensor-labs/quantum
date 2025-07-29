@@ -122,7 +122,7 @@ class SolverWorker:
             loop = asyncio.get_running_loop()
             bits = await loop.run_in_executor(self.executor, self._solve, qasm, circuit_type)
             bt.logging.debug(f" {cid[:10]} → {bits}")
-            self.storage.save_solution(cid, bits, validator_hotkey or None)
+            self.storage.save_solution(cid, bits, circuit_type, validator_hotkey or None)
             self._queue.task_done()
 
     # File‑system polling
