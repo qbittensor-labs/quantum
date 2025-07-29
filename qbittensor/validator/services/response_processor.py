@@ -105,7 +105,6 @@ def _service_one_uid(
             continue
 
         if not cert.verify():
-            bt.logging.warning(f"[cert] bad signature {cert.challenge_id[:8]}")
             continue
         if cert.validator_hotkey not in v._whitelist:
             bt.logging.warning(
