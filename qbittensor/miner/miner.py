@@ -49,6 +49,7 @@ solution_archiver = SolutionArchiver(
     cert_dir=_CERT_DIR,
     archive_dir=_ARCHIVE_DIR,
     cleanup_interval_minutes=60,
+    max_age_days=7,
 )
 
 # Solver registry
