@@ -33,12 +33,7 @@ class ResponseProcessor:
 
 # internal worker
 def _service_one_uid(
-    v: "Validator",
-    uid: int,
-    syn,
-    meta,
-    target_state: str,
-    miner_hotkey: str
+    v: "Validator", uid: int, syn, meta, target_state: str, miner_hotkey: str
 ) -> None:
     """
     Send syn to miner *uid* and handle the reply.
@@ -54,7 +49,7 @@ def _service_one_uid(
             circuit_type=meta.circuit_kind,
             validator_hotkey=meta.validator_hotkey,
             miner_uid=uid,
-            difficulty_level = meta.difficulty,
+            difficulty_level=meta.difficulty,
             entanglement_entropy=meta.entanglement_entropy,
             nqubits=meta.nqubits,
             rqc_depth=meta.rqc_depth,
@@ -155,16 +150,31 @@ def _service_one_uid(
     if desired is None:
         return
 
-    kind = getattr(resp, "circuit_kind", getattr(meta, "circuit_kind", "peaked"))
-    allowed_max = v._sol_proc.allowed_max_difficulty(uid)
-    new_diff = max(0.0, min(float(desired), allowed_max))
+    kind = getattr(resp, "circuit_kind", getattr(meta, "circuit_kind", "")).lower()
 
-    _select_diff_cfg(v, kind).set(uid, new_diff)
+    cfg = _select_diff_cfg(v, kind)  # will raise if kind unknown
+    current = cfg.get(uid)
+    if kind == "hstab":
+        cap = 100.0
+    elif kind == "peaked":
+        cap = current + 0.4
+    else:  # defensive: should never happen
+        raise ValueError(f"Unhandled circuit kind {kind!r}")
+
+    new_diff = max(0.0, min(float(desired), cap))
+    bt.logging.debug(
+        f"[difficulty] {kind} → file {cfg._path.name} "
+        f"uid {uid}: {current:.3f} → {new_diff:.3f}"
+    )
+    cfg.set(uid, new_diff)
+
 
 def _select_diff_cfg(v, kind: str):
     """
-    Return the DifficultyConfig for kind ('peaked', 'hstab')
+    Map 'peaked' and 'hstab'
     """
-    if isinstance(v._diff_cfg, dict):
-        return v._diff_cfg.get(kind) or next(iter(v._diff_cfg.values()))
-    return v._diff_cfg # legacy
+    kind = (kind or "").lower()
+    try:
+        return v._diff_cfg["hstab" if kind.startswith("h") else "peaked"]
+    except KeyError:
+        raise ValueError(f"Unknown circuit kind {kind!r}")
