@@ -1,6 +1,7 @@
 """qbittensor.validator.utils.challenge_logger
 Persists challenges and solutions into SQLite (`validator_data.db`).
 """
+
 from __future__ import annotations
 
 import datetime as _dt
@@ -10,6 +11,7 @@ from pathlib import Path
 import bittensor as bt
 
 from qbittensor.validator.database.database_manager import DatabaseManager
+from qbittensor.validator.utils.uid_utils import as_int_uid
 
 # paths
 _DB_DIR = Path(__file__).resolve().parent.parent / "database"
@@ -54,8 +56,9 @@ _CREATE_SOLUTIONS_SQL = """
 
 _EXTRA_COLUMNS = {
     "challenges": {"circuit_type": "TEXT"},
-    "solutions" : {"circuit_type": "TEXT"},
+    "solutions": {"circuit_type": "TEXT"},
 }
+
 
 def _add_missing_columns(conn):
     for table, cols in _EXTRA_COLUMNS.items():
@@ -165,7 +168,7 @@ def log_challenge(
     db = DatabaseManager(_DB_PATH)
     db.connect()
     try:
-        miner_uid = int(miner_uid) if not isinstance(miner_uid, int) else miner_uid
+        miner_uid = as_int_uid(miner_uid)
         db.execute_query(
             _INSERT_CHALLENGE_SQL,
             (
@@ -235,14 +238,14 @@ def log_certificate_as_solution(cert: Certificate, miner_hotkey: str) -> bool:
 
     conn = sqlite3.connect(_DB_PATH)
     try:
-        before = conn.total_changes # snapshot
+        before = conn.total_changes  # snapshot
         conn.execute(
             _INSERT_CERT_AS_SOLUTION_SQL,
             (
                 cert.challenge_id,
                 cert.circuit_type,
                 cert.validator_hotkey,
-                cert.miner_uid,
+                as_int_uid(cert.miner_uid),
                 miner_hotkey,
                 "<certificate>",
                 0.0,
@@ -257,4 +260,3 @@ def log_certificate_as_solution(cert: Certificate, miner_hotkey: str) -> bool:
         return (conn.total_changes - before) == 1
     finally:
         conn.close()
-

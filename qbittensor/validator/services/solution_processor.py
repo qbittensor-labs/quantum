@@ -14,6 +14,7 @@ from typing import Optional
 import bittensor as bt
 from qbittensor.validator.utils.challenge_logger import _DB_PATH, log_solution
 from qbittensor.validator.services.certificate_issuer import CertificateIssuer
+from qbittensor.validator.utils.uid_utils import as_int_uid
 
 
 @dataclass(slots=True)
@@ -52,9 +53,7 @@ class SolutionProcessor:
             )
             return False
 
-        expected_uid = ch_row["miner_uid"]
-        if isinstance(expected_uid, bytes):
-            expected_uid = int.from_bytes(expected_uid, byteorder='little')
+        expected_uid = as_int_uid(ch_row["miner_uid"])
         if expected_uid != uid:
             bt.logging.trace(f"[solution‑proc] UID mismatch")
             return False
@@ -109,18 +108,18 @@ class SolutionProcessor:
         return is_correct
 
     def highest_correct_difficulty(self, uid: int, circuit_type: str) -> float | None:
-        """Return the greatest difficulty this miner has solved correctly."""
+        uid = as_int_uid(uid)
         with sqlite3.connect(self._db_path) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 """
                 SELECT MAX(difficulty_level) AS max_difficulty
-                  FROM solutions
-                 WHERE miner_uid = ?
-                   AND circuit_type = ?
-                   AND correct_solution = 1
+                FROM solutions
+                WHERE miner_uid = ?
+                AND circuit_type = ?
+                AND correct_solution = 1;
                 """,
-                (uid,),
+                (uid, circuit_type),
             ).fetchone()
 
         val = row["max_difficulty"] if row else None

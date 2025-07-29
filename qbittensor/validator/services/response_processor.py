@@ -10,6 +10,7 @@ from qbittensor.validator.utils.challenge_logger import (
     log_certificate_as_solution,
 )
 from qbittensor.common.certificate import Certificate
+from qbittensor.validator.utils.uid_utils import as_int_uid
 
 RPC_DEADLINE = 10  # seconds
 
@@ -92,11 +93,8 @@ def _service_one_uid(
     for raw in resp.certificates:
         total += 1
         cert = raw if isinstance(raw, Certificate) else Certificate(**raw)
-        if cert.miner_uid != uid:
-            bt.logging.warning(
-                f"[cert] UID mismatch: received from UID {uid} "
-                f"but cert claims UID {cert.miner_uid}. rejecting."
-            )
+        cert_uid = as_int_uid(cert.miner_uid)
+        if cert_uid != uid:
             continue
 
         if not cert.verify():
@@ -108,7 +106,7 @@ def _service_one_uid(
             continue
 
         try:
-            current_hotkey_for_uid = v.metagraph.hotkeys[cert.miner_uid]
+            current_hotkey_for_uid = v.metagraph.hotkeys[cert_uid]
 
             if log_certificate_as_solution(cert, current_hotkey_for_uid):
                 inserted += 1
