@@ -25,4 +25,6 @@ jobs:
           pip install -e .
 
       - name: Run tests
+        env:
+          KMP_DUPLICATE_LIB_OK: "TRUE"
         run: pytest -q
