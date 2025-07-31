@@ -61,7 +61,7 @@ class ScoringManager:
         self.half_life_hours = 72.0
         self.weight_peaked = 0.4
         self.weight_hstab = 0.6
-        self.hstab_exp = 1.7
+        self.hstab_exp = 2.0
 
         bt.logging.info("ScoringManager initialized")
 
