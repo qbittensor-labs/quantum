@@ -9,6 +9,7 @@ import numpy as np
 
 from qbittensor.validator.database.database_manager import DatabaseManager
 
+HSTAB_BASELINE = 26
 
 def size_function(
     nqubits: int,
@@ -137,7 +138,8 @@ class ScoringManager:
         """
         if not is_correct or nqubits is None or nqubits <= 0:
             return 0.0
-        return float(nqubits) ** self.hstab_exp
+        steps = max(1, nqubits - HSTAB_BASELINE + 1)
+        return float(steps) ** self.hstab_exp
 
     def calculate_combined_score(
         self, entropy: float, nqubits: int
