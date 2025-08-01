@@ -92,7 +92,7 @@ def optim_decomp(
     decomp: Decomp,
     target: np.ndarray[complex, 2],
     epsilon: Optional[float] = 1e-6,
-    max_tries: int = 10,
+    max_tries: int = 1000,
 ) -> np.ndarray[float, 1]:
     """
     Compute a decomposition of `target` using `scipy.optimize`, given an
