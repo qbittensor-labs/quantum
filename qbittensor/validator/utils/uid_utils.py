@@ -1,5 +1,18 @@
 def as_int_uid(x: int | bytes | bytearray) -> int:
-    """Return UID as int accepting little endian bytes too for past sol's"""
-    if isinstance(x, (bytes, bytearray)):
-        return int.from_bytes(x, byteorder="little")
-    return int(x)
+    """Return UID as int (0-255), adjusting endianness for bytes if necessary."""
+    if isinstance(x, int):
+        uid = x
+    else:  # bytes or bytearray
+        if len(x) == 0:
+            raise ValueError("Empty bytes or bytearray cannot be interpreted as UID")
+        # Try little-endian first
+        uid = int.from_bytes(x, byteorder="little")
+        if not (0 <= uid <= 255):
+            # Try big-endian
+            uid = int.from_bytes(x, byteorder="big")
+            if not (0 <= uid <= 255):
+                raise ValueError(f"Cannot interpret bytes {x.hex()} as UID (0-255) with either endianness.")
+    # Final check for all cases
+    if not (0 <= uid <= 255):
+        raise ValueError(f"Input {x} results in UID {uid}, which is outside 0-255 range.")
+    return uid
