@@ -203,6 +203,7 @@ def log_solution(
 ) -> None:
 
     now = time_received or _dt.datetime.utcnow()
+    miner_uid = as_int_uid(miner_uid)
     db = DatabaseManager(_DB_PATH)
     db.connect()
     try:
