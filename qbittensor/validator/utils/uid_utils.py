@@ -1,7 +1,10 @@
+import numpy as np
+
 def as_int_uid(x: int | bytes | bytearray) -> int:
     """Return UID as int (0-255), adjusting endianness for bytes if necessary."""
-    if isinstance(x, int):
-        uid = x
+    # handle built-in int or NumPy integer
+    if isinstance(x, (int, np.integer)):  # accept numpy scalars too
+        uid = int(x) # cast to plain int
     else:  # bytes or bytearray
         if len(x) == 0:
             raise ValueError("Empty bytes or bytearray cannot be interpreted as UID")
