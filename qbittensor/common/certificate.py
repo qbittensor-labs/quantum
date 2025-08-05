@@ -10,12 +10,16 @@ import bittensor as bt
 
 _JSON_OPTS = dict(separators=(",", ":"), sort_keys=True)
 
+# LEGACY CERTS CUTOFF
+_CUTOFF = dt.datetime(2025, 8, 7, 12, 0, 0, tzinfo=dt.timezone.utc)
+
 
 class Certificate(BaseModel):
     # payload
     challenge_id: str
     validator_hotkey: str
     miner_uid: int
+    miner_hotkey: str | None = None  # allow legacy certs
     circuit_type: str = Field(
         default="peaked",
         pattern="^(peaked|hstab)$",
@@ -40,6 +44,7 @@ class Certificate(BaseModel):
         "challenge_id",
         "validator_hotkey",
         "miner_uid",
+        "miner_hotkey",
         "circuit_type",
         "entanglement_entropy",
         "nqubits",
@@ -82,7 +87,15 @@ class Certificate(BaseModel):
             bt.logging.debug(f"[cert] signature decode failed ({e})")
             return False
 
-        return kp.verify(payload, sig)
+        payload = self.canonical_bytes()
+        if kp.verify(payload, sig):
+            return True
+
+        # accept legacy certs signed before the cutoff
+        if (not getattr(self, "miner_hotkey", None)) and self._is_pre_cutoff():
+            return kp.verify(self._legacy_bytes(), sig)
+
+        return False
 
     # Pydantic extra validation
     @validator("timestamp")
@@ -90,3 +103,18 @@ class Certificate(BaseModel):
         # Raises if malformed
         dt.datetime.fromisoformat(v)
         return v
+
+    # LEGACY CERTS HELPERS
+    def _legacy_bytes(self) -> bytes:
+       """Canonical bytes for certs issued before hotkey field existed."""
+       legacy_order = tuple(k for k in self._ORDER if k != "miner_hotkey")
+       payload = {k: getattr(self, k) for k in legacy_order}
+       return json.dumps(payload, **_JSON_OPTS).encode()
+    def _is_pre_cutoff(self) -> bool:
+       try:
+           ts = dt.datetime.fromisoformat(self.timestamp)
+           if ts.tzinfo is None:                
+                ts = ts.replace(tzinfo=dt.timezone.utc)
+           return ts < _CUTOFF
+       except Exception:
+           return False

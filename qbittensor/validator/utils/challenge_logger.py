@@ -26,6 +26,7 @@ _CREATE_CHALLENGES_SQL = """
      circuit_type         TEXT,
      validator_hotkey     TEXT,
      miner_uid            INTEGER,
+     miner_hotkey         TEXT,
      difficulty_level     REAL,
      entanglement_entropy REAL,
      nqubits              INTEGER,
@@ -55,7 +56,7 @@ _CREATE_SOLUTIONS_SQL = """
 """
 
 _EXTRA_COLUMNS = {
-    "challenges": {"circuit_type": "TEXT"},
+    "challenges": {"circuit_type": "TEXT", "miner_hotkey": "TEXT"},
     "solutions": {"circuit_type": "TEXT"},
 }
 
@@ -90,12 +91,13 @@ _INSERT_CHALLENGE_SQL = """
      circuit_type,
      validator_hotkey,
      miner_uid,
+     miner_hotkey,
      difficulty_level,
      entanglement_entropy,
      nqubits,
      rqc_depth,
      solution
- ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+ ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
  """
 
 _INSERT_SOLUTION_SQL = """
@@ -158,6 +160,7 @@ def log_challenge(
     circuit_type: str,
     validator_hotkey: str,
     miner_uid: int,
+    miner_hotkey: str,
     difficulty_level: float,
     entanglement_entropy: float,
     nqubits: int,
@@ -176,6 +179,7 @@ def log_challenge(
                 circuit_type,
                 validator_hotkey,
                 miner_uid,
+                miner_hotkey,
                 difficulty_level,
                 entanglement_entropy,
                 nqubits,
@@ -247,7 +251,7 @@ def log_certificate_as_solution(cert: Certificate, miner_hotkey: str) -> bool:
                 cert.circuit_type,
                 cert.validator_hotkey,
                 as_int_uid(cert.miner_uid),
-                miner_hotkey,
+                miner_hotkey or "",
                 "<certificate>",
                 0.0,
                 cert.entanglement_entropy,

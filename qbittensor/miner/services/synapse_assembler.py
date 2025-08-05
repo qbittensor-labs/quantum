@@ -45,7 +45,7 @@ class CertificateStore:
         # keep only the newest <cap> certs in RAM
         self._queue = self._queue[-self._cap :]
 
-    def drain(self, n: int = 32) -> list[dict]:
+    def drain(self, n: int = 256) -> list[dict]:
         return self._queue[:n]
 
 
@@ -77,8 +77,8 @@ class SynapseAssembler:
         if newly_verified:
             _cstore.add(newly_verified)
 
-        # attach up to 32 certs to *this* synapse
-        gossip = _cstore.drain(n=32)
+        # attach up to 256 certs to *this* synapse
+        gossip = _cstore.drain(n=256)
         if gossip:
             syn.attach_certificates(gossip)  # ← top-level list, no JSON wrapper
             bt.logging.info(f"[assembler] 📤 gossiping {len(gossip)} certs")

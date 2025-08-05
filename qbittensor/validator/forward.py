@@ -52,15 +52,14 @@ def _bootstrap(v: "Validator") -> None:
         return
     v._bootstrapped = True
 
-    # one‑time migration of legacy difficulty.json
-    legacy_fp = CFG_DIR / "difficulty.json"
-    peaked_fp = CFG_DIR / "difficulty_peaked.json"
-    if legacy_fp.exists() and not peaked_fp.exists():
-        try:
-            legacy_fp.replace(peaked_fp)
-            bt.logging.info(f"[migration] moved {legacy_fp.name} → {peaked_fp.name}")
-        except Exception as e:
-            bt.logging.warning(f"[migration] failed to rename legacy file: {e!r}")
+    # Create config files if first startup
+    import shutil
+    template = CFG_DIR / "difficulty_hstab.sample.json"
+    runtime  = CFG_DIR / "difficulty_hstab.json"
+
+    if not runtime.exists() and template.exists():
+        shutil.copy2(template, runtime)
+        bt.logging.info(f"[bootstrap] seeded {runtime.name} from template")
 
     v._in_flight   = set()
     v._hotkey_cache: dict[int, str] = {}
@@ -87,7 +86,7 @@ def _bootstrap(v: "Validator") -> None:
             hotkey_lookup=lambda u: v.metagraph.hotkeys[u], clamp=True
         ),
         "hstab": DifficultyConfig(
-            CFG_DIR / "difficulty_hstab.json", uid_list, 26.0, db_path=db_path,
+            CFG_DIR / "difficulty_hstab.json", uid_list, 26.0, db_path=None, # Skips max lookup
             hotkey_lookup=lambda u: v.metagraph.hotkeys[u], clamp=False
         ),
     }

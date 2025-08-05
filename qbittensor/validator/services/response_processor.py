@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from datetime import timezone
 from typing import Any, List
 import bittensor as bt
 
@@ -13,6 +14,7 @@ from qbittensor.common.certificate import Certificate
 from qbittensor.validator.utils.uid_utils import as_int_uid
 
 RPC_DEADLINE = 10  # seconds
+_CUTOFF_TS = dt.datetime(2025, 8, 6, 12, 0, 0, tzinfo=timezone.utc) # legacy certs
 
 
 class ResponseProcessor:
@@ -50,6 +52,7 @@ def _service_one_uid(
             circuit_type=meta.circuit_kind,
             validator_hotkey=meta.validator_hotkey,
             miner_uid=uid,
+            miner_hotkey=miner_hotkey,
             difficulty_level=meta.difficulty,
             entanglement_entropy=meta.entanglement_entropy,
             nqubits=meta.nqubits,
@@ -68,7 +71,7 @@ def _service_one_uid(
         return
 
     syn.solution_bitstring = None  # hide the answer
-    syn.attach_certificates(v.certificate_issuer.pop_for(uid))
+    syn.attach_certificates(v.certificate_issuer.pop_for(miner_hotkey))
 
     # blocking RPC
     try:
@@ -96,9 +99,28 @@ def _service_one_uid(
         cert_uid = as_int_uid(cert.miner_uid)
         if cert_uid != uid:
             continue
+        cert_hkey = getattr(cert, "miner_hotkey", None)
 
+        full_id_ok = (cert_uid == uid and cert_hkey == miner_hotkey)
+
+        # legacy certificate - no hotkey & timestamp before cutoff
+        try:
+            cert_ts = dt.datetime.fromisoformat(cert.timestamp)
+            if cert_ts.tzinfo is None:
+                cert_ts = cert_ts.replace(tzinfo=timezone.utc)
+            cert_ts = cert_ts.astimezone(timezone.utc)
+        except Exception:
+            cert_ts = dt.datetime.max.replace(tzinfo=timezone.utc)  # force-fail
+
+        legacy_ok = (cert_hkey in (None, "")) and cert_uid == uid and cert_ts < _CUTOFF_TS
+
+        if not (full_id_ok or legacy_ok):
+            continue
+
+        # cryptographic proof (handles legacy bytes via Certificate.verify fallback)
         if not cert.verify():
             continue
+
         if cert.validator_hotkey not in v._whitelist:
             bt.logging.warning(
                 f"[cert] hotkey {cert.validator_hotkey[:8]} not whitelisted"
@@ -108,7 +130,7 @@ def _service_one_uid(
         try:
             current_hotkey_for_uid = v.metagraph.hotkeys[cert_uid]
 
-            if log_certificate_as_solution(cert, current_hotkey_for_uid):
+            if log_certificate_as_solution(cert, cert_hkey or current_hotkey_for_uid):
                 inserted += 1
 
         except IndexError:
@@ -119,10 +141,7 @@ def _service_one_uid(
             bt.logging.error(f"[cert] DB insert failed: {exc}", exc_info=True)
 
     if total:
-        bt.logging.info(
-            f"[cert] received {total}, inserted {inserted}, "
-            f"skipped {total - inserted} from UID {uid}"
-        )
+        bt.logging.info(f"[cert] inserted {inserted} certificates")
 
     # solutions
     stored = 0
@@ -136,7 +155,7 @@ def _service_one_uid(
             stored += 1
 
     if stored:
-        bt.logging.info(f"[solution] ✅ stored {stored} from UID {uid}")
+        bt.logging.info(f"[solution] ✅ Processed solutions from UID {uid}")
 
     # difficulty feedback
     desired = getattr(resp, "desired_difficulty", None)

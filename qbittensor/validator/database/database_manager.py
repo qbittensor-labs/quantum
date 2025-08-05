@@ -18,7 +18,6 @@ class DatabaseManager:
 
         self.conn = None
         self.cursor = None
-        print(f"DatabaseManager initialized for: {self.db_path}")
 
     def connect(self):
         """
@@ -37,7 +36,6 @@ class DatabaseManager:
             # Row factory to return rows as sqlite3.Row objects (access by column name)
             self.conn.row_factory = sqlite3.Row
             self.cursor = self.conn.cursor()  # Get a cursor object to execute SQL commands
-            print(f"Successfully connected to the database: {self.db_path}")
         except sqlite3.Error as e:
             print(f"Error connecting to database: {e}")
             self.conn = None
@@ -52,7 +50,6 @@ class DatabaseManager:
             try:
                 self.conn.commit()  # Commit any pending transactions
                 self.conn.close()  # Close the connection
-                print("Database connection closed.")
             except sqlite3.Error as e:
                 print(f"Error closing database connection: {e}")
             finally:

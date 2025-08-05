@@ -83,7 +83,7 @@ def _handle_challenge(syn: CircuitSynapse) -> CircuitSynapse:
     solver = _get_solver_for_synapse(syn)
     
     validator = getattr(syn, "validator_hotkey", None)
-    ready = solver.drain(n=100, validator_hotkey=validator)
+    ready = solver.drain(n=10000, validator_hotkey=validator) # set to large value in case cleanup fails
 
     solver.submit(syn)
     

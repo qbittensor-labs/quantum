@@ -46,6 +46,7 @@ class CertificateIssuer:
         *,
         challenge_id: str,
         miner_uid: int,
+        miner_hotkey: str,
         circuit_type: str,
         entanglement_entropy: float,
         nqubits: int,
@@ -59,6 +60,7 @@ class CertificateIssuer:
             challenge_id=challenge_id,
             validator_hotkey=self.hotkey,
             miner_uid=miner_uid,
+            miner_hotkey=miner_hotkey,
             circuit_type=circuit_type,
             entanglement_entropy=entanglement_entropy,
             nqubits=nqubits,
@@ -66,21 +68,20 @@ class CertificateIssuer:
         )
         cert.sign(self.wallet)
 
-        # one-file-per-cert -> certificates/pending/<uid>/<challenge>.json
-        miner_dir = _OUTBOX / str(miner_uid)
+        # one-file-per-cert -> certificates/pending/<hotkey>/<challenge>.json
+        miner_dir = _OUTBOX / miner_hotkey
         miner_dir.mkdir(exist_ok=True)
 
         path = miner_dir / f"{cert.challenge_id}.json"
         path.write_text(cert.model_dump_json())
 
-        bt.logging.debug(f"[cert] queued → {path}")
         return cert
 
-    def pop_for(self, miner_uid: int, max_items: int | None = None) -> List[dict]:
+    def pop_for(self, miner_hotkey: str, max_items: int | None = None) -> List[dict]:
         """
         Atomically move ALL (or first N) pending certificates for miner_uid
         """
-        miner_dir = _OUTBOX / str(miner_uid)
+        miner_dir = _OUTBOX / miner_hotkey
         if not miner_dir.exists():
             return []
 
@@ -97,7 +98,7 @@ class CertificateIssuer:
 
         # atomic move to “sent” for audit/debug
         if cert_files:
-            sent_dir = _SENT / str(miner_uid)
+            sent_dir = _SENT / miner_hotkey
             sent_dir.mkdir(exist_ok=True)
             #for f in cert_files:
             #    shutil.move(str(f), sent_dir / f.name)

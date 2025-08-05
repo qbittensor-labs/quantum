@@ -57,12 +57,12 @@ class DifficultyConfig:
 
             # max solved difficulty from the DB
             db_current = 0.0
-            if self._db_path and self._hotkey_lookup:
+            if self._db_path and self._hotkey_lookup: # Intentionally skipped for HStab
                 miner_hotkey = self._hotkey_lookup(uid)
                 db_current   = max_solved_difficulty(self._db_path, miner_hotkey)
 
             # whichever is higher becomes the baseline
-            current = max(cfg_current, db_current)
+            current = max(cfg_current, db_current) # db_current empty for Hstab
 
             # downward moves are free
             if value <= current:
