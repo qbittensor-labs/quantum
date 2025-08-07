@@ -55,7 +55,6 @@ class SolutionProcessor:
 
         expected_uid = as_int_uid(ch_row["miner_uid"])
         if expected_uid != uid:
-            bt.logging.trace(f"[solution‑proc] UID mismatch")
             return False
 
         is_correct = self._verify(sol.challenge_id, sol.solution_bitstring)
