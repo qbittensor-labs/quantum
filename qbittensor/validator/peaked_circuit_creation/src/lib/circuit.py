@@ -4,7 +4,9 @@ from abc import abstractmethod, abstractstaticmethod
 from dataclasses import dataclass
 from typing import List
 import numpy as np
+from .circuit_meta import Circuit
 from .decompose import cnots, ising, optim_decomp
+from .optim import optim_circuit_indep
 
 _DECOMP_POOL = None
 
@@ -606,8 +608,6 @@ class PeakedCircuit:
     Fields:
         seed (int):
             The seed value used to generate the circuit.
-        gen (numpy.random.Generator):
-            Internal RNG created from `seed`.
         num_qubits (int):
             The number of qubits in the circuit.
         gates (List[Gate]):
@@ -615,21 +615,61 @@ class PeakedCircuit:
         target_state (str):
             The target (i.e. solution) basis state as a string of all '0's and
             '1's. The length of this string should equal `num_qubits`.
-        peak_prob (float >= 0):
-            The probability of the target state.
+        peak_prob_est (float >= 0):
+            Estimated probability of the target state.
     """
 
     seed: int
-    gen: np.random.Generator
     num_qubits: int
     gates: List[Gate]
     target_state: str  # all 0's and 1's
-    peak_prob: float
+    peak_prob_est: float
+
+    @staticmethod
+    def from_circuit(
+        circuit: Circuit,
+        target_peak: float,
+        **optim_kwargs: Any,
+    ) -> PeakedCircuit:
+        """
+        Optimize the gates in `self` *in place* to produce a properly peaked
+        circuit.
+
+        Args:
+            circuit (.circuit_meta.Circuit):
+                Initial (un-optimized) set of gates.
+            target_peak (float):
+                Target peaking probability.
+            optim_kwargs (Any):
+                Arguments to pass to `.optim.optim_circuit_indep`. Defaults are
+                    - `pqc_prop = 2/3`
+                    - `maxiters = 2500`
+                    - `epsilon = 1e-6`
+
+        Returns:
+            circuit (PeakedCircuit):
+                Output peaked circuit.
+        """
+        (target_state, peak_prob_est) = optim_circuit_indep(
+            circuit,
+            pqc_prop=optim_kwargs.get("pqc_prop", 2 / 3),
+            target_peak=target_peak,
+            maxiters=optim_kwargs.get("maxiters", 2500),
+            epsilon=optim_kwargs.get("epsilon", 1e-6),
+        )
+        unis = list()
+        for gate in circuit.gates:
+            (l, r) = gate.qubits()
+            mat = gate.tensor.data.cpu().resolve_conj().numpy().reshape((4, 4))
+            unis.append(SU4(l, r, mat))
+        return PeakedCircuit.from_su4_series(
+            target_state, peak_prob_est, unis, circuit.seed)
+
 
     @staticmethod
     def from_su4_series(
         target_state: str,
-        peak_prob: float,
+        peak_prob_est: float,
         unis: List[SU4],
         seed: int,
     ):
@@ -640,8 +680,8 @@ class PeakedCircuit:
         Args:
             target_state (str):
                 Target peaked state. Should be all '0's and '1's.
-            peak_prob (float):
-                Output probability of the peaked state.
+            peak_prob_est (float):
+                Estimated output probability of the peaked state.
             unis (List[SU4]):
                 List of two-qubit unitaries.
             seed (int):
@@ -653,26 +693,24 @@ class PeakedCircuit:
         """
         gen = np.random.Generator(np.random.PCG64(seed))
         # cnot or ising decomp based on seed
-        choice = hash(str(seed)) % 2
-        decomp_method = "CNOT" if choice == 0 else "Ising"
-        print(f"convert to ordinary gates (using {decomp_method} decomposition):")
+        decomp_method = "CNOT" if gen.random() < 0.5 else "Ising"
+        print(f"convert to ordinary gates (using {decomp_method} decomposition)")
 
         # this assumes every qubit is touched
         num_qubits = max(max(uni.target0, uni.target1) for uni in unis) + 1
 
         pool = _get_decomp_pool()
-        if choice == 0:
+        if decomp_method == "CNOT":
             gates = [gate for subcirc in pool.map(_cnots_decomp, unis) for gate in subcirc]
         else:
             gates = [gate for subcirc in pool.map(_ising_decomp, unis) for gate in subcirc]
 
         return PeakedCircuit(
             seed,
-            gen,
             num_qubits,
             gates,
             target_state,
-            peak_prob,
+            peak_prob_est,
         )
 
     # really dumb rendering because the circuits are pretty simple
@@ -692,7 +730,7 @@ include "qelib1.inc";
 qreg q[{self.num_qubits}];
 creg c[{self.num_qubits}];
 
-"""
+"""[1:]
         for gate in self.gates:
             # TODO: maybe change this for more randomness
             if isinstance(gate, (Rxx, Ryy, Rzz)):
