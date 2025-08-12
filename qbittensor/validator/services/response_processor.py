@@ -157,7 +157,6 @@ def _service_one_uid(
     if stored:
         bt.logging.info(f"[solution] ✅ Processed solutions from UID {uid}")
 
-    # difficulty feedback
     desired = getattr(resp, "desired_difficulty", None)
     if desired is None:
         for sol in SolutionExtractor.extract(resp):
@@ -170,15 +169,23 @@ def _service_one_uid(
     kind = getattr(resp, "circuit_kind", getattr(meta, "circuit_kind", "")).lower()
 
     cfg = _select_diff_cfg(v, kind)  # will raise if kind unknown
-    current = cfg.get(uid)
+    current = float(cfg.get(uid))
+
     if kind == "hstab":
         cap = 100.0
+        new_diff = max(0.0, min(float(desired), cap))
+
     elif kind == "peaked":
-        cap = current + 0.4
+        MIN_Q = 16.0
+        MAX_Q = 100.0
+        STEP  = 2.0
+        current_q = current if current > 0.0 else 26.0
+        cap = min(MAX_Q, current_q + STEP)
+        new_q = max(MIN_Q, min(float(desired), cap))
+        new_diff = new_q
+
     else:  # defensive: should never happen
         raise ValueError(f"Unhandled circuit kind {kind!r}")
-
-    new_diff = max(0.0, min(float(desired), cap))
     bt.logging.debug(
         f"[difficulty] {kind} → file {cfg._path.name} "
         f"uid {uid}: {current:.3f} → {new_diff:.3f}"

@@ -73,9 +73,7 @@ class SolutionProcessor:
                     miner_uid=uid,
                     miner_hotkey=miner_hotkey,
                     circuit_type=sol.circuit_type or _col("circuit_type", "peaked"),
-                    entanglement_entropy=_col(
-                        "entanglement_entropy", sol.entanglement_entropy or 0.0
-                    ),
+                    entanglement_entropy=0.0,
                     nqubits=_col("nqubits", sol.nqubits or 0),
                     rqc_depth=_col("rqc_depth", sol.rqc_depth or 0),
                 )
@@ -93,9 +91,7 @@ class SolutionProcessor:
                 miner_hotkey=miner_hotkey,
                 miner_solution=sol.solution_bitstring,
                 difficulty_level=_col("difficulty_level", sol.difficulty_level or 0.0),
-                entanglement_entropy=_col(
-                    "entanglement_entropy", sol.entanglement_entropy or 0.0
-                ),
+                entanglement_entropy=0.0,
                 nqubits=_col("nqubits", sol.nqubits or 0),
                 rqc_depth=_col("rqc_depth", sol.rqc_depth or 0),
                 time_received=time_sent,
