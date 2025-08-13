@@ -83,6 +83,10 @@ class ChallengeProducer:
         }
         self._weights_cache = [s.weight for s in self._strategies.values()]
 
+        # one peaked one hstab per UID
+        self._pending_uid: int | None = None
+        self._pending_kind: str | None = None
+
     # Start producer
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -142,12 +146,40 @@ class ChallengeProducer:
                 continue
 
             try:
-                uid = self._next_uid()
-                syn, meta, target = self._build_challenge_for_uid(uid)
-                self.queue.put_nowait(QItem(uid, syn, meta, target, file_path=None))
-                bt.logging.trace(
-                    f"[challenge-producer] queued {meta.circuit_kind} for UID {uid}"
-                )
+                if self._pending_uid is not None and self._pending_kind is not None:
+                    uid = self._pending_uid
+                    syn, meta, target = self._build_challenge_of_kind(uid, self._pending_kind)
+                    self.queue.put_nowait(QItem(uid, syn, meta, target, file_path=None))
+                    bt.logging.trace(
+                        f"[challenge-producer] queued {meta.circuit_kind} for UID {uid} (pending)"
+                    )
+                    self._pending_uid = None
+                    self._pending_kind = None
+                else:
+                    uid = self._next_uid()
+
+                    room_for_two = (
+                        (self.queue.maxsize == 0) or
+                        (self.queue.qsize() <= max(0, self.queue.maxsize - 2))
+                    )
+
+                    # peaked
+                    syn1, meta1, target1 = self._build_challenge_of_kind(uid, "peaked")
+                    self.queue.put_nowait(QItem(uid, syn1, meta1, target1, file_path=None))
+                    bt.logging.trace(
+                        f"[challenge-producer] queued {meta1.circuit_kind} for UID {uid}"
+                    )
+
+                    if room_for_two:
+                        # hstab
+                        syn2, meta2, target2 = self._build_challenge_of_kind(uid, "hstab")
+                        self.queue.put_nowait(QItem(uid, syn2, meta2, target2, file_path=None))
+                        bt.logging.trace(
+                            f"[challenge-producer] queued {meta2.circuit_kind} for UID {uid}"
+                        )
+                    else:
+                        self._pending_uid = uid
+                        self._pending_kind = "hstab"
             except Exception:
                 bt.logging.error("[challenge-producer] error", exc_info=True)
 
@@ -155,14 +187,18 @@ class ChallengeProducer:
 
     # Challenge creation
     def _build_challenge_for_uid(self, uid: int) -> Tuple[Any, ChallengeMeta, str]:
-        kind = random.choices(
-            population=list(self._strategies.keys()),
-            weights=self._weights_cache,
-            k=1,
-        )[0]
+        return self._build_challenge_of_kind(uid, "peaked")
 
+    def _build_challenge_of_kind(self, uid: int, kind: str) -> Tuple[Any, ChallengeMeta, str]:
+        kind = (kind or "").lower()
+        if kind not in self._strategies:
+            raise ValueError(f"Unknown challenge kind: {kind!r}")
         strat = self._strategies[kind]
-        difficulty = self._diff_cfg[kind].get(uid)
+
+        difficulty_cfg = self._diff_cfg.get(kind)
+        if difficulty_cfg is None:
+            raise KeyError(f"Missing difficulty config for kind: {kind}")
+        difficulty = difficulty_cfg.get(uid)
         syn, meta, target = strat.builder(
             wallet=self._wallet,
             difficulty=difficulty,

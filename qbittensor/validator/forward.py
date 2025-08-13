@@ -25,11 +25,8 @@ except Exception:
 
 _CPU_COUNT = max(1, os.cpu_count() or 1)
 
-_PEAKED_WORKERS = max(1, min(32, (_GPU_COUNT or 1) * 2)) # GPU‑bound
-_HSTAB_WORKERS  = max(4, min(32, _CPU_COUNT * 2)) # CPU‑bound
-
-_PEAKED_QSIZE = _PEAKED_WORKERS * 4
-_HSTAB_QSIZE  = _HSTAB_WORKERS * 4
+_DISPATCH_WORKERS = max(4, min(32, _CPU_COUNT * 2))
+_QUEUE_SIZE = 128
 
 RPC_DEADLINE = 10
 CFG_DIR = Path(__file__).resolve().parent / "config"
@@ -97,46 +94,52 @@ def _bootstrap(v: "Validator") -> None:
     v._weight_mgr  = WeightManager(v)
 
     from qbittensor.validator.services.challenge_producer import ChallengeProducer
-    v._producers = {
-        "peaked": ChallengeProducer(
-            wallet=v.wallet, diff_cfg={"peaked": v._diff_cfg["peaked"]},
-            uid_list=uid_list, validator=v, queue_size=_PEAKED_QSIZE
-        ),
-        "hstab": ChallengeProducer(
-            wallet=v.wallet, diff_cfg={"hstab": v._diff_cfg["hstab"]},
-            uid_list=uid_list, validator=v, queue_size=_HSTAB_QSIZE
-        ),
-    }
-    v._producers["peaked"]._strategies["hstab"].weight = 0.0
-    v._producers["hstab"]._strategies["peaked"].weight = 0.0
-    for p in v._producers.values():
-        p._weights_cache = [s.weight for s in p._strategies.values()]
-        p.start()
+    v._producer = ChallengeProducer(
+        wallet=v.wallet,
+        diff_cfg={
+            "peaked": v._diff_cfg["peaked"],
+            "hstab": v._diff_cfg["hstab"],
+        },
+        uid_list=uid_list,
+        validator=v,
+        queue_size=_QUEUE_SIZE,
+    )
+    v._producer._weights_cache = [s.weight for s in v._producer._strategies.values()]
+    v._producer.start()
 
     from qbittensor.validator.services.response_processor import ResponseProcessor
     v._resp_proc = ResponseProcessor(v)
 
-    v._queues = {k: p.queue for k, p in v._producers.items()}
-    v._executors = {
-        "peaked": futures.ThreadPoolExecutor(max_workers=_PEAKED_WORKERS, thread_name_prefix="peaked"),
-        "hstab": futures.ThreadPoolExecutor(max_workers=_HSTAB_WORKERS,  thread_name_prefix="hstab"),
-    }
+    v._queue = v._producer.queue
+    v._executor = futures.ThreadPoolExecutor(max_workers=_DISPATCH_WORKERS, thread_name_prefix="dispatch")
 
     if not hasattr(v, "_dispatcher_thread"):
         v._dispatcher_thread = threading.Thread(target=_dispatcher_loop, args=(v,), name="Dispatcher", daemon=True)
         v._dispatcher_thread.start()
 
-    bt.logging.info(f"Validator bootstrap complete - workers: peaked={_PEAKED_WORKERS}, hstab={_HSTAB_WORKERS}")
+    bt.logging.info(
+        f"Validator bootstrap complete - single-threaded generation, dispatch_workers={_DISPATCH_WORKERS}"
+    )
 
 
 def _dispatcher_loop(v: "Validator") -> None:
     while True:
-        for kind, q in v._queues.items():
-            try:
-                item = q.get_nowait()
-            except queue.Empty:
+        try:
+            item = v._queue.get_nowait()
+        except queue.Empty:
+            time.sleep(_DISPATCH_SLEEP)
+            continue
+        try:
+            uid, *_ = item
+        except Exception:
+            time.sleep(_DISPATCH_SLEEP)
+            continue
+        with _inflight_lock:
+            if uid in v._in_flight:
+                v._queue.put(item)
+                time.sleep(_DISPATCH_SLEEP)
                 continue
-            v._executors[kind].submit(_handle_item, v, item)
+        v._executor.submit(_handle_item, v, item)
         time.sleep(_DISPATCH_SLEEP)
 
 
@@ -179,8 +182,7 @@ def _refresh_uid_deps(v: "Validator") -> None:
         v._uid_cache = final_uids
         for cfg in v._diff_cfg.values():
             cfg.update_uid_list(final_uids)
-        for p in v._producers.values():
-            p.update_uid_list(final_uids)
+        v._producer.update_uid_list(final_uids)
         bt.logging.info(f"metagraph changed: {len(final_uids)} live miners")
 
 
