@@ -119,15 +119,16 @@ class CircuitShape:
         specified layer.
         """
         corr = (self.nqubits % 2) * (layer % 2)
+        corr2 = int(self.nqubits % 2 == 0)
         ngates0 = self.nqubits // 2
         if ndir == Neighbor.UL:
             return (layer + 1, gate + ngates0 + corr - 1)
         elif ndir == Neighbor.UR:
             return (layer + 1, gate + ngates0 + corr)
         elif ndir == Neighbor.LL:
-            return (layer - 1, gate - ngates0 + corr)
+            return (layer - 1, gate - ngates0 + corr + corr2 - 1)
         elif ndir == Neighbor.LR:
-            return (layer - 1, gate - ngates0 + corr + 1)
+            return (layer - 1, gate - ngates0 + corr + corr2)
         else:
             raise ValueError(f"invalid neighbor direction `{ndir}`")
 
