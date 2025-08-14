@@ -1,24 +1,21 @@
-from copy import copy
 from enum import IntEnum
-import gc
-import sys
 from typing import List, Optional, Tuple
 
 import cotengra as ctg
 import numpy as np
-import quimb as qu
 import quimb.tensor as qtn
 import torch
 from torch import optim
-import torch_optimizer
 import tqdm
-import warnings
 
 from .circuit_meta import (Circuit, GateTensor, MPS)
 
 # Determine device for tensor operations
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Using device: {DEVICE} (CUDA available: {torch.cuda.is_available()})")
+# quiet, deterministic-friendly default
+VERBOSE = False
+if VERBOSE:
+    print(f"Using device: {DEVICE} (CUDA available: {torch.cuda.is_available()})")
 
 opti = ctg.ReusableHyperOptimizer(
     progbar=False,
@@ -338,11 +335,13 @@ def optim_circuit_indep(
     local_depth = circuit.shape.nqubits * [0]
     num_tiles = circuit.shape.num_tiles()
     local_peaking_target = target_peak ** (1 / num_tiles)
-    print(f"LOCAL PEAKING TARGET = {local_peaking_target:g}")
-    print(f"{circuit.shape.num_tile_ranks()} RANKS:")
+    if VERBOSE:
+        print(f"LOCAL PEAKING TARGET = {local_peaking_target:g}")
+        print(f"{circuit.shape.num_tile_ranks()} RANKS:")
     tile_count = 0
     for rank in range(circuit.shape.num_tile_ranks()):
-        print(f"RANK {rank} ({circuit.shape.tiles_in_rank(rank)} tiles)")
+        if VERBOSE:
+            print(f"RANK {rank} ({circuit.shape.tiles_in_rank(rank)} tiles)")
         tile_gates = circuit.tiles(rank)
 
         # TODO: maybe possible to parallelize this loop
@@ -424,7 +423,8 @@ def optim_circuit_indep(
                 del target_state
                 for gate in tile:
                     gate.tensor.apply_to_arrays(_into_cpu)
-            print()
+            if VERBOSE:
+                print()
 
     output_state = "".join("1" if b else "0" for b in pstate)
     return (output_state, peak_prob)
@@ -437,9 +437,9 @@ def _qubit_bounds(tile: List[GateTensor]) -> Optional[slice]:
     qmin = None
     qmax = None
     for gate in tile:
-        (l, r) = gate.qubits()
-        qmin = l if qmin is None else min(qmin, l)
-        qmax = r if qmax is None else max(qmax, r)
+        (left, right) = gate.qubits()
+        qmin = left if qmin is None else min(qmin, left)
+        qmax = right if qmax is None else max(qmax, right)
     return None if qmin is None or qmax is None else (qmin, qmax + 1)
 
 def _optim_subcircuit(
@@ -515,7 +515,7 @@ def _optim_subcircuit(
         lr=max(0.001, 10 ** (nqubits / 4 - 11)),
         # lr=0.001,
     )
-    pbar = tqdm.tqdm(range(maxiters), disable=False)
+    pbar = tqdm.tqdm(range(maxiters), disable=True)
     prev_loss: Optional[torch.Tensor] = None
     res: Optional[OptimResult] = None
     for step in pbar:
@@ -523,7 +523,8 @@ def _optim_subcircuit(
         loss = model()
         loss.backward()
         optimizer.step()
-        pbar.set_description(f"{loss:.6e}")
+        if not pbar.disable and VERBOSE:
+            pbar.set_description(f"{loss:.6e}")
         # if step % 100 == 0:
         #     # bt.logging.info(
         #     print(
@@ -539,12 +540,12 @@ def _optim_subcircuit(
             res = OptimResult.LocalMinimum
             break
         prev_loss = loss
-    if res is None:
+    if res is None and VERBOSE:
         print(f"Reached maxiters ({maxiters}); final loss: {loss:.6e}")
         res = OptimResult.Maxiters
-    elif res == OptimResult.Success:
+    elif res == OptimResult.Success and VERBOSE:
         print(f"Early stop: peak is >{target_threshold:g} (step {step}/{maxiters})")
-    elif res == OptimResult.LocalMinimum:
+    elif res == OptimResult.LocalMinimum and VERBOSE:
         print(f"Early stop: change in loss is too small; loss: {loss:.6e}")
 
     # clean up: clear cotengra optimizer cache

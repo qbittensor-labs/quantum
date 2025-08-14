@@ -9,12 +9,15 @@ from .decompose import cnots, ising, optim_decomp
 from .optim import optim_circuit_indep
 
 _DECOMP_POOL = None
+_DECOMP_WORKERS = int((multiprocessing.cpu_count() or 1) * 0.5) or 1
 
 def _get_decomp_pool():
     """Get or create the reusable decomposition pool."""
     global _DECOMP_POOL
     if _DECOMP_POOL is None:
-        _DECOMP_POOL = multiprocessing.Pool()
+        # spawn is here to avoid CUDA/BLAS issues with 'fork' in multi-thread
+        ctx = multiprocessing.get_context("spawn")
+        _DECOMP_POOL = ctx.Pool(processes=_DECOMP_WORKERS)
     return _DECOMP_POOL
 
 
@@ -629,7 +632,7 @@ class PeakedCircuit:
     def from_circuit(
         circuit: Circuit,
         target_peak: float,
-        **optim_kwargs: Any,
+        **optim_kwargs: object,
     ) -> PeakedCircuit:
         """
         Optimize the gates in `self` *in place* to produce a properly peaked
@@ -659,9 +662,9 @@ class PeakedCircuit:
         )
         unis = list()
         for gate in circuit.gates:
-            (l, r) = gate.qubits()
+            (left, right) = gate.qubits()
             mat = gate.tensor.data.cpu().resolve_conj().numpy().reshape((4, 4))
-            unis.append(SU4(l, r, mat))
+            unis.append(SU4(left, right, mat))
         return PeakedCircuit.from_su4_series(
             target_state, peak_prob_est, unis, circuit.seed)
 

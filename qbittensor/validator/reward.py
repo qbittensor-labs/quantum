@@ -59,8 +59,8 @@ class ScoringManager:
         self.knee = 32  # Knee point qubits
         self.min_score = 0.15  # Min score
         self.half_life_hours = 72.0
-        self.weight_peaked = 0.4
-        self.weight_hstab = 0.6
+        self.weight_peaked = 0.8
+        self.weight_hstab = 0.2
         self.hstab_exp = 2.0
 
         bt.logging.info("ScoringManager initialized")

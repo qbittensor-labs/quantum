@@ -24,11 +24,11 @@ class ResponseProcessor:
     and update DifficultyConfig
     """
 
-    def __init__(self, validator: "Validator"):
+    def __init__(self, validator):
         self.v = validator
 
     # public entry
-    def process(self, item: "ChallengeProducer.QItem", miner_hotkey: str) -> None:
+    def process(self, item, miner_hotkey: str) -> None:
         uid, syn, meta, target_state, _ = item
         bt.logging.info(f"[send] ▶️  UID {uid}   cid={meta.challenge_id[:10]}")
         _service_one_uid(self.v, uid, syn, meta, target_state, miner_hotkey)
@@ -36,7 +36,7 @@ class ResponseProcessor:
 
 # internal worker
 def _service_one_uid(
-    v: "Validator", uid: int, syn, meta, target_state: str, miner_hotkey: str
+    v, uid: int, syn, meta, target_state: str, miner_hotkey: str
 ) -> None:
     """
     Send syn to miner *uid* and handle the reply.
@@ -178,8 +178,8 @@ def _service_one_uid(
     elif kind == "peaked":
         MIN_Q = 16.0
         MAX_Q = 100.0
-        STEP  = 2.0
-        current_q = current if current > 0.0 else 26.0
+        STEP  = 7.0
+        current_q = current if current > 0.0 else 30.0
         cap = min(MAX_Q, current_q + STEP)
         new_q = max(MIN_Q, min(float(desired), cap))
         new_diff = new_q

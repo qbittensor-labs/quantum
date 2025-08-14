@@ -4,12 +4,10 @@ Utilities for generating circuits
 
 from __future__ import annotations
 
-import gc
 import random
 import time
 import hashlib
 from typing import Iterable, Tuple
-from dataclasses import dataclass
 import numpy as np
 
 import bittensor as bt
@@ -38,6 +36,17 @@ __all__ = [
     "build_hstab_challenge",
 ]
 
+def _convert_peaked_difficulty_to_qubits(level: float) -> int:
+    try:
+        lvl = float(level)
+    except Exception:
+        lvl = 0.0
+    if 0.0 <= lvl <= 10.0:
+        nqubits = int(12 + 10 * np.log2(lvl + 3.9))
+    else:
+        nqubits = int(round(lvl))
+    return max(16, min(nqubits, 100))
+
 # Peaked circuits
 
 def build_peaked_challenge(
@@ -48,9 +57,14 @@ def build_peaked_challenge(
     """
     seed = time.time_ns() % (2**32)
 
-    nqubits, rqc_depth = _params_from_difficulty(difficulty)
+    # Interpret difficulty for peaked as qubit count, with legacy support
+    nqubits = _convert_peaked_difficulty_to_qubits(difficulty)
+    # Derive rqc_depth from qubits
+    rqc_mul = 150 * np.exp(-nqubits / 4) + 0.5
+    rqc_depth = int(round(rqc_mul * nqubits))
     entropy = 0.0
-    peaking_threshold = float(max(20.0, 10 ** (0.38 * difficulty + 2.102)))
+    # Target peaking heuristic as a function of qubits
+    peaking_threshold = float(max(20.0, 10 ** (0.38 * nqubits + 2.102)))
     
     t0 = time.perf_counter()
     error_msg = None
@@ -84,7 +98,7 @@ def build_peaked_challenge(
     unsigned = {
         "seed": seed,
         "circuit_data": circuit.to_qasm(),
-        "difficulty_level": difficulty,
+        "difficulty_level": float(nqubits),
         "validator_hotkey": wallet.hotkey.ss58_address,
         "nqubits": nqubits,
         "rqc_depth": rqc_depth,
@@ -95,7 +109,7 @@ def build_peaked_challenge(
     meta = ChallengeMeta(
         challenge_id=unsigned["challenge_id"],
         circuit_kind="peaked",
-        difficulty=difficulty,
+        difficulty=float(nqubits),
         validator_hotkey=wallet.hotkey.ss58_address,
         entanglement_entropy=entropy,
         nqubits=nqubits,

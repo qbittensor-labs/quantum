@@ -119,7 +119,7 @@ class CircuitShape:
         specified layer.
         """
         corr = (self.nqubits % 2) * (layer % 2)
-        corr2 = int(self.nqubits % 2 == 0)
+        corr2 = (self.nqubits % 2 == 0)
         ngates0 = self.nqubits // 2
         if ndir == Neighbor.UL:
             return (layer + 1, gate + ngates0 + corr - 1)
