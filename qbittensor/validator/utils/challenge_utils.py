@@ -29,7 +29,6 @@ from qbittensor.validator.hidden_stabilizers_creation.lib.circuit_gen import HSt
 
 from qbittensor.validator.utils.validator_meta import ChallengeMeta
 from qbittensor.validator.utils.crypto_utils import canonical_hash
-from qbittensor.validator.utils.metrics_logger import log_generation_metric
 
 __all__ = [
     "build_peaked_challenge",
@@ -66,35 +65,11 @@ def build_peaked_challenge(
     # Target peaking heuristic as a function of qubits
     peaking_threshold = float(max(20.0, 10 ** (0.38 * nqubits + 2.102)))
     
-    t0 = time.perf_counter()
-    error_msg = None
-    try:
-        circuit = generate_circuit_by_qubits(
-            nqubits=nqubits,
-            seed=seed,
-            target_peaking=peaking_threshold,
-        )
-        success = True
-    except Exception as e:
-        success = False
-        error_msg = str(e)
-        raise
-    finally:
-        duration = time.perf_counter() - t0
-        try:
-            log_generation_metric(
-                kind="peaked",
-                nqubits=nqubits,
-                rqc_depth=rqc_depth,
-                seed=seed,
-                duration_s=duration,
-                device=str(PEAKED_DEVICE),
-                target_peaking=peaking_threshold,
-                success=success,
-                error=error_msg,
-            )
-        except Exception:
-            pass
+    circuit = generate_circuit_by_qubits(
+        nqubits=nqubits,
+        seed=seed,
+        target_peaking=peaking_threshold,
+    )
     unsigned = {
         "seed": seed,
         "circuit_data": circuit.to_qasm(),
@@ -135,33 +110,9 @@ def build_hstab_challenge(
     nqubits: int = max(26, round(difficulty))
     seed = random.randrange(1 << 30)
 
-    t0 = time.perf_counter()
-    error_msg = None
-    try:
-        generator = make_gen(seed)
-        circ: HStabCircuit = HStabCircuit.make_circuit(generator, nqubits)
-        qasm = circ.to_qasm()
-        success = True
-    except Exception as e:
-        success = False
-        error_msg = str(e)
-        raise
-    finally:
-        duration = time.perf_counter() - t0
-        try:
-            log_generation_metric(
-                kind="hstab",
-                nqubits=nqubits,
-                rqc_depth=0,
-                seed=seed,
-                duration_s=duration,
-                device="CPU",
-                target_peaking=None,
-                success=success,
-                error=error_msg,
-            )
-        except Exception:
-            pass
+    generator = make_gen(seed)
+    circ: HStabCircuit = HStabCircuit.make_circuit(generator, nqubits)
+    qasm = circ.to_qasm()
     flat_solution = _flatten_hstab_string(circ.stabilizers)
     cid = hashlib.sha256(qasm.encode()).hexdigest()
 
