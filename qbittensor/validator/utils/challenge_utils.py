@@ -78,6 +78,12 @@ def build_peaked_challenge(
 
     nqubits = _convert_peaked_difficulty_to_qubits(difficulty)
     level = _convert_qubits_to_peaked_difficulty(nqubits)
+    try:
+        bt.logging.info(
+            f"[peaked] requested diff={float(difficulty):.2f} -> nqubits={int(nqubits)} (level={float(level):.3f})"
+        )
+    except Exception:
+        pass
 
     rqc_mul = 150 * np.exp(-nqubits / 4) + 0.5
     rqc_depth = int(round(rqc_mul * nqubits))

@@ -10,7 +10,7 @@ import torch
 from torch import optim
 import warnings
 import torch_optimizer
-import tqdm
+import bittensor as bt
 from qbittensor.validator.peaked_circuit_creation.peaked_circuits.functions import range_unitary
 from qbittensor.validator.peaked_circuit_creation.lib.circuit import (PeakedCircuit, SU4)
 
@@ -93,6 +93,12 @@ class CircuitParams:
             circuit (PeakedCircuit):
                 Output peaked circuit.
         """
+        try:
+            bt.logging.info(
+                f"[peaked] starting circuit generation: nqubits={self.nqubits}, rqc_depth={self.rqc_depth}, pqc_depth={self.pqc_depth}"
+            )
+        except Exception:
+            pass
         gen = np.random.Generator(np.random.PCG64(seed))
         target_state = "".join(
             "1" if gen.random() < 0.5 else "0" for _ in range(self.nqubits))
@@ -134,7 +140,7 @@ class CircuitParams:
 
 # Determine device for tensor operations
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Using device: {DEVICE} (CUDA available: {torch.cuda.is_available()})")
+bt.logging.info(f"Using device: {DEVICE} (CUDA available: {torch.cuda.is_available()})")
 
 _ctg_methods = ["greedy"]
 try:
@@ -326,26 +332,22 @@ def make_circuit(
     try:
         contraction_tree = (const.H & opt_copy).contract(all, optimize=opti, get='tree')
     except Exception:
-        print("contraction fallback: using 'greedy' plan once")
+        bt.logging.info("contraction fallback: using 'greedy' plan once")
         contraction_tree = (const.H & opt_copy).contract(all, optimize='greedy', get='tree')
     model = TNModel(opt, const, optimize_plan=contraction_tree, proj_every=PROJ_EVERY)
-    lr = 2e-5
+    lr = 5e-2
     optimizer = optim.AdamW(model.parameters(), lr=lr)
-    pbar = tqdm.tqdm(range(maxiters), disable=False)
     scheduler = torch.optim.lr_scheduler.StepLR(
         optimizer, step_size=300, gamma=0.5)
     previous_loss = torch.inf
-    for step in pbar:
-        show_progress_bar = True
+    for step in range(maxiters):
         optimizer.zero_grad(set_to_none=True)
         loss = model()
         loss.backward()
         optimizer.step()
-        pbar.set_description(f"{loss:.6e}")
-        progress_bar_refresh_rate = 0
         # early stop if the peaking ratio is larger than the target
         if -loss * 2 ** nqubits > target_peaking:
-            print(f"\nEarly stop: peak is >{target_peaking:g}x uniform")
+            bt.logging.info(f"Early stop: peak is >{target_peaking:g}x uniform")
             break
 
     # return the initial random circuit (without initial state tensors), the

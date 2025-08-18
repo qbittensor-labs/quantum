@@ -12,6 +12,9 @@ from qbittensor.validator.utils.challenge_logger import (
 )
 from qbittensor.common.certificate import Certificate
 from qbittensor.validator.utils.uid_utils import as_int_uid
+from qbittensor.validator.utils.challenge_utils import (
+    _convert_peaked_difficulty_to_qubits,
+)
 
 RPC_DEADLINE = 10  # seconds
 _CUTOFF_TS = dt.datetime(2025, 8, 6, 12, 0, 0, tzinfo=timezone.utc) # legacy certs
@@ -177,11 +180,20 @@ def _service_one_uid(
 
     elif kind == "peaked":
         MIN_Q = 16.0
-        MAX_Q = 100.0
+        MAX_Q = 39.0
         STEP  = 7.0
         current_q = current if current > 0.0 else 30.0
         cap = min(MAX_Q, current_q + STEP)
-        new_q = max(MIN_Q, min(float(desired), cap))
+
+        try:
+            desired_val = float(desired)
+        except Exception:
+            desired_val = current_q
+
+        if 0.0 <= desired_val <= 10.0:
+            desired_val = float(_convert_peaked_difficulty_to_qubits(desired_val))
+
+        new_q = max(MIN_Q, min(desired_val, cap))
         new_diff = new_q
 
     else:  # defensive: should never happen
