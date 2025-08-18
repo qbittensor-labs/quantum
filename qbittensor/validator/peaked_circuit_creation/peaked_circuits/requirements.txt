@@ -1,0 +1,9 @@
+# Python version 3.12.2
+torch==2.2.1
+quimb==1.7.3
+scipy==1.11.2
+matplotlib==3.8.3
+numba==0.59.1
+torch_optimizer==0.3.0
+tqdm==4.66.2
+pytest==8.1.1

@@ -1,5 +1,5 @@
 import numpy as np
-from numpy import conjugate, cos, exp, sin
+from numpy import (sin, cos, exp, kron, conjugate)
 
 """
 Functions in this module compute quantities relevant to a "CNOT-based"
@@ -16,45 +16,29 @@ decomposition of a general SU(4) gate according to [this form][cnot-based]:
 [cnot-based]: https://arxiv.org/abs/quant-ph/0308033
 """
 
-
 def u3(alpha: float, beta: float, gamma: float) -> np.ndarray[complex, 2]:
-    return np.array(
+    return np.array([
         [
-            [
-                cos(alpha / 2),
-                -exp(1j * gamma) * sin(alpha / 2),
-            ],
-            [
-                exp(1j * beta) * sin(alpha / 2),
-                exp(1j * (beta + gamma)) * cos(alpha / 2),
-            ],
-        ]
-    )
-
+            cos(alpha / 2),
+            -exp(1j * gamma) * sin(alpha / 2),
+        ],
+        [
+            exp(1j * beta) * sin(alpha / 2),
+            exp(1j * (beta + gamma)) * cos(alpha / 2),
+        ],
+    ])
 
 def rx(angle: float) -> np.ndarray[complex, 2]:
-    return np.array(
-        [
-            [
-                cos(angle / 2),
-                -1j * sin(angle / 2),
-            ],
-            [
-                -1j * sin(angle / 2),
-                cos(angle / 2),
-            ],
-        ]
-    )
-
+    return np.array([
+        [ cos(angle / 2), -1j * sin(angle / 2), ],
+        [ -1j * sin(angle / 2), cos(angle / 2), ],
+    ])
 
 def rz(angle: float) -> np.ndarray[complex, 2]:
-    return np.array(
-        [
-            [exp(-1j * angle / 2), 0],
-            [0, exp(1j * angle / 2)],
-        ]
-    )
-
+    return np.array([
+        [ exp(-1j * angle / 2), 0 ],
+        [ 0, exp( 1j * angle / 2) ],
+    ])
 
 def u3u3(
     alpha0: float,
@@ -87,35 +71,32 @@ def u3u3(
     ei_a1_b1_b2 = ei_a1 * ei_b1_b2
     ei_a2_b1_b2 = ei_a2 * ei_b1_b2
     ei_a1_a2_b1_b2 = ei_a1_a2 * ei_b1_b2
-    return np.array(
+    return np.array([
         [
-            [
-                cos_a0 * cos_b0,
-                -ei_b2 * cos_a0 * sin_b0,
-                -ei_a2 * sin_a0 * cos_b0,
-                ei_a2_b2 * sin_a0 * sin_b0,
-            ],
-            [
-                ei_b1 * cos_a0 * sin_b0,
-                ei_b1_b2 * cos_a0 * cos_b0,
-                -ei_a2_b1 * sin_a0 * sin_b0,
-                -ei_a2_b1_b2 * sin_a0 * cos_b0,
-            ],
-            [
-                ei_a1 * sin_a0 * cos_b0,
-                -ei_a1_b2 * sin_a0 * sin_b0,
-                ei_a1_a2 * cos_a0 * cos_b0,
-                -ei_a1_a2_b2 * cos_a0 * sin_b0,
-            ],
-            [
-                ei_a1_b1 * sin_a0 * sin_b0,
-                ei_a1_b1_b2 * sin_a0 * cos_b0,
-                ei_a1_a2_b1 * cos_a0 * sin_b0,
-                ei_a1_a2_b1_b2 * cos_a0 * cos_b0,
-            ],
-        ]
-    )
-
+            cos_a0 * cos_b0,
+            -ei_b2 * cos_a0 * sin_b0,
+            -ei_a2 * sin_a0 * cos_b0,
+            ei_a2_b2 * sin_a0 * sin_b0,
+        ],
+        [
+            ei_b1 * cos_a0 * sin_b0,
+            ei_b1_b2 * cos_a0 * cos_b0,
+            -ei_a2_b1 * sin_a0 * sin_b0,
+            -ei_a2_b1_b2 * sin_a0 * cos_b0,
+        ],
+        [
+            ei_a1 * sin_a0 * cos_b0,
+            -ei_a1_b2 * sin_a0 * sin_b0,
+            ei_a1_a2 * cos_a0 * cos_b0,
+            -ei_a1_a2_b2 * cos_a0 * sin_b0,
+        ],
+        [
+            ei_a1_b1 * sin_a0 * sin_b0,
+            ei_a1_b1_b2 * sin_a0 * cos_b0,
+            ei_a1_a2_b1 * cos_a0 * sin_b0,
+            ei_a1_a2_b1_b2 * cos_a0 * cos_b0,
+        ],
+    ])
 
 def cnot_rxrz_cnot(eta0: float, eta1: float) -> np.ndarray[complex, 2]:
     """
@@ -127,15 +108,12 @@ def cnot_rxrz_cnot(eta0: float, eta1: float) -> np.ndarray[complex, 2]:
     sin_h0 = sin(eta0 / 2)
     ei_ph1 = exp(1j * eta1 / 2)
     ei_mh1 = conjugate(ei_ph1)
-    return np.array(
-        [
-            [ei_mh1 * cos_h0, 0, 0, -1j * ei_mh1 * sin_h0],
-            [0, ei_ph1 * cos_h0, -1j * ei_ph1 * sin_h0, 0],
-            [0, -1j * ei_ph1 * sin_h0, ei_ph1 * cos_h0, 0],
-            [-1j * ei_mh1 * sin_h0, 0, 0, ei_mh1 * cos_h0],
-        ]
-    )
-
+    return np.array([
+        [ ei_mh1 * cos_h0, 0, 0, -1j * ei_mh1 * sin_h0 ],
+        [ 0, ei_ph1 * cos_h0, -1j * ei_ph1 * sin_h0, 0 ],
+        [ 0, -1j * ei_ph1 * sin_h0, ei_ph1 * cos_h0, 0 ],
+        [ -1j * ei_mh1 * sin_h0, 0, 0, ei_mh1 * cos_h0 ],
+    ])
 
 def u3u3_cnot_irz(
     gamma0: float,
@@ -172,50 +150,50 @@ def u3u3_cnot_irz(
     ei_g1_g2_d1_d2 = ei_g1_g2 * ei_d1_d2
     ei_ph2 = exp(1j * eta2 / 2)
     ei_mh2 = conjugate(ei_ph2)
-    return np.array(
+    return np.array([
         [
-            [
-                ei_mh2 * cos_g0 * cos_d0,
-                -ei_ph2 * ei_d2 * cos_g0 * sin_d0,
-                ei_mh2 * ei_g2_d2 * sin_g0 * sin_d0,
-                -ei_ph2 * ei_g2 * sin_g0 * cos_d0,
-            ],
-            [
-                ei_mh2 * ei_d1 * cos_g0 * sin_d0,
-                ei_ph2 * ei_d1_d2 * cos_g0 * cos_d0,
-                -ei_mh2 * ei_g2_d1_d2 * sin_g0 * cos_d0,
-                -ei_ph2 * ei_g2_d1 * sin_g0 * sin_d0,
-            ],
-            [
-                ei_mh2 * ei_g1 * sin_g0 * cos_d0,
-                -ei_ph2 * ei_g1_d2 * sin_g0 * sin_d0,
-                -ei_mh2 * ei_g1_g2_d2 * cos_g0 * sin_d0,
-                ei_ph2 * ei_g1_g2 * cos_g0 * cos_d0,
-            ],
-            [
-                ei_mh2 * ei_g1_d1 * sin_g0 * sin_d0,
-                ei_ph2 * ei_g1_d1_d2 * sin_g0 * cos_d0,
-                ei_mh2 * ei_g1_g2_d1_d2 * cos_g0 * cos_d0,
-                ei_ph2 * ei_g1_g2_d1 * cos_g0 * sin_d0,
-            ],
-        ]
-    )
-
+            ei_mh2 * cos_g0 * cos_d0,
+            -ei_ph2 * ei_d2 * cos_g0 * sin_d0,
+            ei_mh2 * ei_g2_d2 * sin_g0 * sin_d0,
+            -ei_ph2 * ei_g2 * sin_g0 * cos_d0,
+        ],
+        [
+            ei_mh2 * ei_d1 * cos_g0 * sin_d0,
+            ei_ph2 * ei_d1_d2 * cos_g0 * cos_d0,
+            -ei_mh2 * ei_g2_d1_d2 * sin_g0 * cos_d0,
+            -ei_ph2 * ei_g2_d1 * sin_g0 * sin_d0,
+        ],
+        [
+            ei_mh2 * ei_g1 * sin_g0 * cos_d0,
+            -ei_ph2 * ei_g1_d2 * sin_g0 * sin_d0,
+            -ei_mh2 * ei_g1_g2_d2 * cos_g0 * sin_d0,
+            ei_ph2 * ei_g1_g2 * cos_g0 * cos_d0,
+        ],
+        [
+            ei_mh2 * ei_g1_d1 * sin_g0 * sin_d0,
+            ei_ph2 * ei_g1_d1_d2 * sin_g0 * cos_d0,
+            ei_mh2 * ei_g1_g2_d1_d2 * cos_g0 * cos_d0,
+            ei_ph2 * ei_g1_g2_d1 * cos_g0 * sin_d0,
+        ],
+    ])
 
 def make_uni(params: np.ndarray[float, 1]) -> np.ndarray[complex, 2]:
     """
     Compute the full unitary matrix following the decomposition form above.
     """
-    [alpha0, alpha1, alpha2, beta0, beta1, beta2, eta0, eta1, eta2, gamma0, gamma1, gamma2, delta0, delta1, delta2] = (
-        params
-    )
+    [
+        alpha0, alpha1, alpha2,
+        beta0, beta1, beta2,
+        eta0, eta1, eta2,
+        gamma0, gamma1, gamma2,
+        delta0, delta1, delta2
+    ] = params
 
     return (
         u3u3(alpha0, alpha1, alpha2, beta0, beta1, beta2)
         @ cnot_rxrz_cnot(eta0, eta1)
         @ u3u3_cnot_irz(gamma0, gamma1, gamma2, delta0, delta1, delta2, eta2)
     )
-
 
 def fidelity(
     U_target: np.ndarray[complex, 2],
@@ -238,7 +216,6 @@ def fidelity(
     uni = make_uni(params)
     return abs(np.diag(uni.T.conjugate() @ U_target).sum()) ** 2 / 16
 
-
 def step(
     U_target: np.ndarray[complex, 2],
     params: np.ndarray[float, 1],
@@ -252,7 +229,6 @@ def step(
     params[pos] += stepsize
     return (f_plus - f_minus) / (2 * stepsize)
 
-
 def fidelity_grad(
     U_target: np.ndarray[complex, 2],
     params: np.ndarray[float, 1],
@@ -261,3 +237,4 @@ def fidelity_grad(
     Compute the gradient of the fidelity with respect to all parameters.
     """
     return np.array([step(U_target, params, 1e-6, k) for k in range(15)])
+
