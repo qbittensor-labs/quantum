@@ -153,8 +153,8 @@ class SolutionProcessor:
 
         ok = expected_solution == bitstring
         if not ok:
-            bt.logging.debug(
-                f"[solution-proc] expected {expected_solution}, got {bitstring}"
+            bt.logging.trace(
+                f"[solution-proc] invalid solution"
             )
         return ok
 
