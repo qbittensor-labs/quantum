@@ -182,12 +182,11 @@ class ScoringManager:
             # PEAKED rows
             rows_peaked = db.fetch_all(
                 """
-                SELECT miner_uid, entanglement_entropy, nqubits,
+                SELECT miner_hotkey, entanglement_entropy, nqubits,
                     time_received, correct_solution
                 FROM   solutions
                 WHERE  time_received >= ?
                 AND  (circuit_type = 'peaked' OR circuit_type IS NULL)
-                AND typeof(miner_uid) = 'integer'
                 ORDER  BY time_received DESC
                 """,
                 (cutoff_time.isoformat(),),
@@ -196,12 +195,11 @@ class ScoringManager:
             # HSTAB rows
             rows_hstab = db.fetch_all(
                 """
-                SELECT miner_uid, nqubits,
+                SELECT miner_hotkey, nqubits,
                     time_received, correct_solution
                 FROM   solutions
                 WHERE  time_received >= ?
                 AND  circuit_type  = 'hstab'
-                AND typeof(miner_uid) = 'integer'
                 ORDER  BY time_received DESC
                 """,
                 (cutoff_time.isoformat(),),
@@ -209,7 +207,9 @@ class ScoringManager:
 
             # process peaked
             for row in rows_peaked:
-                uid = row["miner_uid"]
+                hk = (row["miner_hotkey"] or "").strip()
+                if not hk:
+                    continue
                 entropy = 0.0
                 nqubits = row["nqubits"]
                 is_correct = row["correct_solution"] == 1
@@ -222,11 +222,13 @@ class ScoringManager:
                 base = self.calculate_single_solution_score(
                     entropy, nqubits, is_correct
                 )
-                scores_raw[uid]["peaked"] += base * decay
+                scores_raw[hk]["peaked"] += base * decay
 
             # process hstab
             for row in rows_hstab:
-                uid = row["miner_uid"]
+                hk = (row["miner_hotkey"] or "").strip()
+                if not hk:
+                    continue
                 nqubits = row["nqubits"]
                 is_correct = row["correct_solution"] == 1
                 ts = datetime.fromisoformat(row["time_received"]).replace(
@@ -236,7 +238,7 @@ class ScoringManager:
                 decay = math.exp(-decay_const * age_h)
 
                 base = self._hstab_score(nqubits, is_correct)
-                scores_raw[uid]["hstab"] += base * decay
+                scores_raw[hk]["hstab"] += base * decay
 
         finally:
             db.close()
@@ -247,18 +249,18 @@ class ScoringManager:
         max_hstab = max((p["hstab"] for p in scores_raw.values()), default=0.0) + eps
 
         combined = {
-            uid: (
+            hk: (
                 self.weight_peaked * (parts["peaked"] / max_peaked)
                 + self.weight_hstab * (parts["hstab"] / max_hstab)
             )
-            for uid, parts in scores_raw.items()
+            for hk, parts in scores_raw.items()
         }
 
         max_blend = max(combined.values(), default=0.0)
         if max_blend > 0:
-            combined = {uid: val / max_blend for uid, val in combined.items()}
+            combined = {hk: val / max_blend for hk, val in combined.items()}
         else:
-            combined = {uid: 0.0 for uid in combined}
+            combined = {hk: 0.0 for hk, val in combined.items()}
 
         return dict(combined)
 

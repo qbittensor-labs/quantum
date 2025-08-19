@@ -94,6 +94,8 @@ def _service_one_uid(
 
     resp = resp_list[0]
 
+    kind = getattr(resp, "circuit_kind", getattr(meta, "circuit_kind", "")).lower() or "peaked"
+
     # certificates
     total = inserted = 0
     for raw in resp.certificates:
@@ -148,7 +150,14 @@ def _service_one_uid(
 
     # solutions
     stored = 0
-    for sol in SolutionExtractor.extract(resp):
+    sols = list(SolutionExtractor.extract(resp))
+    for sol in sols:
+        # Guarantee per-solution circuit type so SolutionProcessor wont default to peaked
+        if not getattr(sol, "circuit_type", None):
+            try:
+                sol.circuit_type = kind
+            except Exception:
+                pass
         if v._sol_proc.process(
             uid=uid,
             miner_hotkey=miner_hotkey,
@@ -169,19 +178,21 @@ def _service_one_uid(
     if desired is None:
         return
 
-    kind = getattr(resp, "circuit_kind", getattr(meta, "circuit_kind", "")).lower()
-
     cfg = _select_diff_cfg(v, kind)  # will raise if kind unknown
     current = float(cfg.get(uid))
 
     if kind == "hstab":
-        cap = 100.0
+        cap = 50.0
         new_diff = max(0.0, min(float(desired), cap))
 
     elif kind == "peaked":
         MIN_Q = 16.0
         MAX_Q = 39.0
         STEP  = 7.0
+
+        if 0.0 <= current <= 10.0:
+            current = float(_convert_peaked_difficulty_to_qubits(current))
+
         current_q = current if current > 0.0 else 30.0
         cap = min(MAX_Q, current_q + STEP)
 

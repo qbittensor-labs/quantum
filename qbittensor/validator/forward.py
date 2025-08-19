@@ -78,12 +78,14 @@ def _bootstrap(v: "Validator") -> None:
     db_path = db_dir / "validator_data.db"
 
     v._diff_cfg = {
+
         "peaked": DifficultyConfig(
-            CFG_DIR / "difficulty_peaked.json", uid_list, 30.0, db_path=db_path,
+            CFG_DIR / "difficulty_peaked.json", uid_list, 0.0, db_path=db_path,
             hotkey_lookup=lambda u: v.metagraph.hotkeys[u], clamp=False
         ),
+
         "hstab": DifficultyConfig(
-            CFG_DIR / "difficulty_hstab.json", uid_list, 26.0, db_path=None, # Skips max lookup
+            CFG_DIR / "difficulty_hstab.json", uid_list, 26.0, db_path=None,  # Skips max lookup
             hotkey_lookup=lambda u: v.metagraph.hotkeys[u], clamp=False
         ),
     }

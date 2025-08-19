@@ -66,10 +66,16 @@ class WeightManager:
                 bt.logging.warning("No scores available for weight calculation")
                 return  # still update timestamp below
 
-            weights = torch.zeros(len(self.validator.metagraph.uids))
-            for uid_, score in scores.items():
-                if 0 <= uid_ < len(weights):
-                    weights[uid_] = max(MIN_WEIGHT, score)
+            m = self.validator.metagraph
+            hk_to_uid = {m.hotkeys[u]: u for u in m.uids if m.axons[u].is_serving}
+            uid_scores = {hk_to_uid[hk]: float(s) for hk, s in scores.items() if hk in hk_to_uid}
+            if not uid_scores:
+                bt.logging.warning("No live miners matched the scored hotkeys")
+                return
+
+            weights = torch.zeros(len(m.uids))
+            for uid_, score in uid_scores.items():
+                weights[uid_] = max(MIN_WEIGHT, score)
 
             total = weights.sum()
             if total > 0:
@@ -93,7 +99,7 @@ class WeightManager:
                 for uid_, score in sorted(
                     scores.items(), key=lambda x: x[1], reverse=True
                 )[:5]:
-                    bt.logging.info(f"UID {uid_}: {score:.4f}")
+                    bt.logging.info(f"hotkey {uid_}: {score:.4f}")
             else:
                 bt.logging.error(f"Weight extrinsic failed: {result}")
 

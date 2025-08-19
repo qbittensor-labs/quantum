@@ -13,6 +13,7 @@ def max_solved_difficulty(db_path: Path, miner_hotkey: str) -> float:
                 FROM   solutions
                 WHERE  miner_hotkey = ?
                   AND  correct_solution = 1
+                  AND circuit_type = 'peaked'
                 """,
                 (miner_hotkey,),
             )
