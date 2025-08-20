@@ -64,7 +64,7 @@ def _convert_peaked_difficulty_to_qubits(level: float) -> int:
         nqubits = int(12 + 10 * np.log2(lvl + 3.9))
     else:
         nqubits = int(round(lvl))
-    return max(16, min(nqubits, 100))
+    return max(16, min(nqubits, 40))
 
 # Peaked circuits
 
@@ -90,10 +90,34 @@ def build_peaked_challenge(
     pqc_depth = max(1, nqubits // 5)
     params = CircuitParams(level, nqubits, rqc_depth, pqc_depth)
     entropy = 0.0
-    try:
-        circuit = params.compute_circuit(seed)
-    finally:
-        _clear_memory()
+
+    attempts = 0
+    last_exc = None
+    while attempts < 3:
+        try:
+            circuit = params.compute_circuit(seed)
+            break
+        except Exception as e:
+            msg = str(e).lower()
+            is_oom = (
+                isinstance(e, MemoryError)
+                or 'out of memory' in msg
+                or 'cuda error: out of memory' in msg
+            )
+            if not is_oom:
+                last_exc = e
+                raise
+            attempts += 1
+            last_exc = e
+            try:
+                bt.logging.warning(f"[peaked] OOM during circuit gen (attempt {attempts}), clearing caches and retrying...")
+            except Exception:
+                pass
+            _clear_memory()
+            time.sleep(0.1)
+    else:
+        raise last_exc if last_exc else RuntimeError("Peaked circuit generation failed after retries")
+    _clear_memory()
 
     unsigned = {
         "seed": seed,
@@ -169,7 +193,8 @@ def _params_from_difficulty(level: float) -> Tuple[int, int]:
     Returns (nqubits, rqc_depth).
     """
     nqubits = int(round(level))
-    nqubits = max(16, min(nqubits, 100))
+    # Cap at 40 qubits
+    nqubits = max(16, min(nqubits, 40))
     rqc_mul = 150 * np.exp(-nqubits / 4) + 0.5
     rqc_depth = int(round(rqc_mul * nqubits))
     return nqubits, rqc_depth

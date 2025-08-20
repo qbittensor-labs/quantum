@@ -187,7 +187,7 @@ def _service_one_uid(
 
     elif kind == "peaked":
         MIN_Q = 16.0
-        MAX_Q = 39.0
+        MAX_Q = 40.0
         STEP  = 7.0
 
         if 0.0 <= current <= 10.0:

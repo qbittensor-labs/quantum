@@ -7,7 +7,6 @@ import cotengra as ctg
 import numpy as np
 import quimb.tensor as qtn
 import torch
-import tqdm
 from torch import optim
 
 from qbittensor.validator.peaked_circuit_creation.lib.circuit import (
@@ -139,7 +138,7 @@ def find_lucky_seed_and_make_circuit(
 
     # Use torch.no_grad() as we are not training, only evaluating.
     with torch.no_grad():
-        for i in tqdm.tqdm(range(NUM_SEEDS_TO_TRY), desc="Finding Lucky Seed"):
+        for i in range(NUM_SEEDS_TO_TRY):
             candidate_seed = base_seed + i
             model, _, _, _ = prepare_model_for_seed(
                 target_state, rqc_depth, pqc_depth, candidate_seed
@@ -162,7 +161,8 @@ def find_lucky_seed_and_make_circuit(
     )
 
     # Set up the main optimizer
-    lr = max(0.001, 10 ** (nqubits / 4 - 11))
+    #lr = max(0.001, 10 ** (nqubits / 4 - 11))
+    lr = 5e-2
     optimizer = optim.AdamW(model.parameters(), lr=lr)
 
     # Main optimization loop
