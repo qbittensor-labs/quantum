@@ -188,30 +188,30 @@ class ScoringManager:
         db = DatabaseManager(self.database_path)
         db.connect()
         try:
-            # PEAKED rows
             rows_peaked = db.fetch_all(
                 """
-                SELECT miner_uid, entanglement_entropy, nqubits,
-                    time_received, correct_solution
-                FROM   solutions
-                WHERE  time_received >= ?
-                AND  (circuit_type = 'peaked' OR circuit_type IS NULL)
-                AND typeof(miner_uid) = 'integer'
-                ORDER  BY time_received DESC
+                SELECT s.miner_uid, s.entanglement_entropy, s.nqubits,
+                       s.time_received, s.correct_solution
+                FROM   solutions s
+                JOIN   challenges c ON c.challenge_id = s.challenge_id
+                WHERE  s.time_received >= ?
+                AND    c.circuit_type = 'peaked'
+                AND typeof(s.miner_uid) = 'integer'
+                ORDER  BY s.time_received DESC
                 """,
                 (cutoff_time.isoformat(),),
             )
 
-            # HSTAB rows
             rows_hstab = db.fetch_all(
                 """
-                SELECT miner_uid, nqubits,
-                    time_received, correct_solution
-                FROM   solutions
-                WHERE  time_received >= ?
-                AND  circuit_type  = 'hstab'
-                AND typeof(miner_uid) = 'integer'
-                ORDER  BY time_received DESC
+                SELECT s.miner_uid, s.nqubits,
+                       s.time_received, s.correct_solution
+                FROM   solutions s
+                JOIN   challenges c ON c.challenge_id = s.challenge_id
+                WHERE  s.time_received >= ?
+                AND    c.circuit_type  = 'hstab'
+                AND typeof(s.miner_uid) = 'integer'
+                ORDER  BY s.time_received DESC
                 """,
                 (cutoff_time.isoformat(),),
             )

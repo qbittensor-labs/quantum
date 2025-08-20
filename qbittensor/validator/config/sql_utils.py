@@ -9,10 +9,12 @@ def max_solved_difficulty(db_path: Path, miner_hotkey: str) -> float:
         with sqlite3.connect(str(db_path)) as conn:
             cur = conn.execute(
                 """
-                SELECT MAX(difficulty_level)
-                FROM   solutions
-                WHERE  miner_hotkey = ?
-                  AND  correct_solution = 1
+                SELECT MAX(s.difficulty_level)
+                FROM   solutions s
+                JOIN   challenges c ON c.challenge_id = s.challenge_id
+                WHERE  s.miner_hotkey = ?
+                  AND  s.correct_solution = 1
+                  AND  c.circuit_type = 'peaked'
                 """,
                 (miner_hotkey,),
             )

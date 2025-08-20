@@ -65,6 +65,14 @@ class SolutionProcessor:
         def _col(key: str, default):
             return ch_row[key] if (ch_row and key in ch_row.keys()) else default
 
+        challenge_circuit_type = _col("circuit_type", "peaked")
+        if getattr(sol, "circuit_type", None) and sol.circuit_type != challenge_circuit_type:
+            bt.logging.warning(
+                f"[solution-proc] miner-reported circuit_type '{sol.circuit_type}' "
+                f"does not match challenge circuit_type '{challenge_circuit_type}' for {sol.challenge_id[:10]}. "
+                f"Using challenge circuit_type."
+            )
+
         # issue certificate only after _col exists
         if is_correct:
             try:
@@ -72,10 +80,8 @@ class SolutionProcessor:
                     challenge_id=sol.challenge_id,
                     miner_uid=uid,
                     miner_hotkey=miner_hotkey,
-                    circuit_type=sol.circuit_type or _col("circuit_type", "peaked"),
-                    entanglement_entropy=_col(
-                        "entanglement_entropy", sol.entanglement_entropy or 0.0
-                    ),
+                    circuit_type=challenge_circuit_type,
+                    entanglement_entropy=0.0,
                     nqubits=_col("nqubits", sol.nqubits or 0),
                     rqc_depth=_col("rqc_depth", sol.rqc_depth or 0),
                 )
@@ -87,15 +93,13 @@ class SolutionProcessor:
         try:
             log_solution(
                 challenge_id=sol.challenge_id,
-                circuit_type=sol.circuit_type or _col("circuit_type", "peaked"),
+                circuit_type=challenge_circuit_type,
                 validator_hotkey=_col("validator_hotkey", "<unknown>"),
                 miner_uid=uid,
                 miner_hotkey=miner_hotkey,
                 miner_solution=sol.solution_bitstring,
                 difficulty_level=_col("difficulty_level", sol.difficulty_level or 0.0),
-                entanglement_entropy=_col(
-                    "entanglement_entropy", sol.entanglement_entropy or 0.0
-                ),
+                entanglement_entropy=0.0,
                 nqubits=_col("nqubits", sol.nqubits or 0),
                 rqc_depth=_col("rqc_depth", sol.rqc_depth or 0),
                 time_received=time_sent,
@@ -113,11 +117,12 @@ class SolutionProcessor:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 """
-                SELECT MAX(difficulty_level) AS max_difficulty
-                FROM solutions
-                WHERE miner_uid = ?
-                AND circuit_type = ?
-                AND correct_solution = 1;
+                SELECT MAX(s.difficulty_level) AS max_difficulty
+                FROM   solutions s
+                JOIN   challenges c ON c.challenge_id = s.challenge_id
+                WHERE  s.miner_uid = ?
+                AND    c.circuit_type = ?
+                AND    s.correct_solution = 1;
                 """,
                 (uid, circuit_type),
             ).fetchone()
@@ -157,8 +162,8 @@ class SolutionProcessor:
 
         ok = expected_solution == bitstring
         if not ok:
-            bt.logging.debug(
-                f"[solution-proc] expected {expected_solution}, got {bitstring}"
+            bt.logging.trace(
+                f"[solution-proc] invalid solution"
             )
         return ok
 
