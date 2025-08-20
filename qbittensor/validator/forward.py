@@ -15,6 +15,7 @@ from qbittensor.validator.services.certificate_issuer import CertificateIssuer
 from qbittensor.validator.services.solution_processor import SolutionProcessor
 from qbittensor.validator.services.weight_manager import WeightManager
 from qbittensor.validator.utils.whitelist import load_whitelist
+from qbittensor.validator.database.fixups import apply_fixups 
 
 # AUTO‑SCALE: detect hardware once at import time
 try:
@@ -79,6 +80,8 @@ def _bootstrap(v: "Validator") -> None:
 
     db_dir = Path(__file__).parent / "database"; db_dir.mkdir(exist_ok=True)
     db_path = db_dir / "validator_data.db"
+
+    apply_fixups(db_path)
 
     v._diff_cfg = {
         "peaked": DifficultyConfig(
