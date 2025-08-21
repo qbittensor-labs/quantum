@@ -55,12 +55,12 @@ class ScoringManager:
 
         self.database_path = database_path
         self._ensure_scoring_tables()
-        self.weight_ee = 0.3  # Entropy weight score
+        self.weight_ee = 0.0  # Disable entropy in combined score
         self.knee = 32  # Knee point qubits
         self.min_score = 0.15  # Min score
         self.half_life_hours = 72.0
-        self.weight_peaked = 0.4
-        self.weight_hstab = 0.6
+        self.weight_peaked = 0.8
+        self.weight_hstab = 0.2
         self.hstab_exp = 2.0
 
         bt.logging.info("ScoringManager initialized")
@@ -118,8 +118,8 @@ class ScoringManager:
         """
         Normalizes the entanglement entropy (EE) based on the number of qubits.
         """
-        if entropy is None or entropy <= 0 or nqubits is None or nqubits <= 0:
-            return 0.0
+        # With entropy disabled, always return 0
+        return 0.0
 
         ln2 = np.log(2)
         # Smax is the theoretical maximum entanglement entropy for nqubits.
@@ -155,12 +155,9 @@ class ScoringManager:
         Returns:
         - Tuple[float, float, float]: A tuple containing (normalized_entropy_score, size_score, combined_score).
         """
-        ee = self.normalize_ee(entropy, nqubits)
+        ee = 0.0
         size_func = size_function(nqubits, knee=self.knee, min_score=self.min_score)
-
-        weight_size = 1 - self.weight_ee
-        combined = self.weight_ee * ee + weight_size * size_func
-
+        combined = size_func
         return ee, size_func, combined
 
     def calculate_single_solution_score(
@@ -170,13 +167,7 @@ class ScoringManager:
         if not is_correct:
             return 0.0
 
-        if entropy is None or entropy < 0:
-            bt.logging.warning(
-                f"Invalid entanglement_entropy ({entropy}). Using 0 for score calculation."
-            )
-            entropy = 0.0
-
-        _, _, combined_score = self.calculate_combined_score(entropy, nqubits)
+        _, _, combined_score = self.calculate_combined_score(0.0, nqubits)
         return combined_score
 
     def calculate_decayed_scores(self, lookback_days: int = 2) -> Dict[int, float]:
@@ -190,13 +181,12 @@ class ScoringManager:
         try:
             rows_peaked = db.fetch_all(
                 """
-                SELECT s.miner_uid, s.entanglement_entropy, s.nqubits,
+                SELECT s.miner_hotkey, s.entanglement_entropy, s.nqubits,
                        s.time_received, s.correct_solution
                 FROM   solutions s
                 JOIN   challenges c ON c.challenge_id = s.challenge_id
                 WHERE  s.time_received >= ?
                 AND    c.circuit_type = 'peaked'
-                AND typeof(s.miner_uid) = 'integer'
                 ORDER  BY s.time_received DESC
                 """,
                 (cutoff_time.isoformat(),),
@@ -204,13 +194,12 @@ class ScoringManager:
 
             rows_hstab = db.fetch_all(
                 """
-                SELECT s.miner_uid, s.nqubits,
+                SELECT s.miner_hotkey, s.nqubits,
                        s.time_received, s.correct_solution
                 FROM   solutions s
                 JOIN   challenges c ON c.challenge_id = s.challenge_id
                 WHERE  s.time_received >= ?
                 AND    c.circuit_type  = 'hstab'
-                AND typeof(s.miner_uid) = 'integer'
                 ORDER  BY s.time_received DESC
                 """,
                 (cutoff_time.isoformat(),),
@@ -218,8 +207,10 @@ class ScoringManager:
 
             # process peaked
             for row in rows_peaked:
-                uid = row["miner_uid"]
-                entropy = row["entanglement_entropy"]
+                hk = (row["miner_hotkey"] or "").strip()
+                if not hk:
+                    continue
+                entropy = 0.0
                 nqubits = row["nqubits"]
                 is_correct = row["correct_solution"] == 1
                 ts = datetime.fromisoformat(row["time_received"]).replace(
@@ -231,11 +222,13 @@ class ScoringManager:
                 base = self.calculate_single_solution_score(
                     entropy, nqubits, is_correct
                 )
-                scores_raw[uid]["peaked"] += base * decay
+                scores_raw[hk]["peaked"] += base * decay
 
             # process hstab
             for row in rows_hstab:
-                uid = row["miner_uid"]
+                hk = (row["miner_hotkey"] or "").strip()
+                if not hk:
+                    continue
                 nqubits = row["nqubits"]
                 is_correct = row["correct_solution"] == 1
                 ts = datetime.fromisoformat(row["time_received"]).replace(
@@ -245,7 +238,7 @@ class ScoringManager:
                 decay = math.exp(-decay_const * age_h)
 
                 base = self._hstab_score(nqubits, is_correct)
-                scores_raw[uid]["hstab"] += base * decay
+                scores_raw[hk]["hstab"] += base * decay
 
         finally:
             db.close()
@@ -256,18 +249,18 @@ class ScoringManager:
         max_hstab = max((p["hstab"] for p in scores_raw.values()), default=0.0) + eps
 
         combined = {
-            uid: (
+            hk: (
                 self.weight_peaked * (parts["peaked"] / max_peaked)
                 + self.weight_hstab * (parts["hstab"] / max_hstab)
             )
-            for uid, parts in scores_raw.items()
+            for hk, parts in scores_raw.items()
         }
 
         max_blend = max(combined.values(), default=0.0)
         if max_blend > 0:
-            combined = {uid: val / max_blend for uid, val in combined.items()}
+            combined = {hk: val / max_blend for hk, val in combined.items()}
         else:
-            combined = {uid: 0.0 for uid in combined}
+            combined = {hk: 0.0 for hk, val in combined.items()}
 
         return dict(combined)
 
@@ -313,7 +306,7 @@ class ScoringManager:
                     is_correct = row["correct_solution"] == 1
 
                     combined_score = self.calculate_single_solution_score(
-                        entropy, nqubits, is_correct
+                        0.0, nqubits, is_correct
                     )
 
                     if is_correct:  # Only count correct solutions for daily stats
@@ -422,7 +415,7 @@ class ScoringManager:
                             entropy, nqubits, is_correct
                         )
                         total_score_sum += combined_score
-                        total_entropy_sum += entropy if entropy is not None else 0.0
+                        total_entropy_sum += 0.0
                         total_qubits_sum += nqubits if nqubits is not None else 0
                         correct_solution_count += 1
                         active_miners.add(miner_uid)

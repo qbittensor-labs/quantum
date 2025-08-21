@@ -75,6 +75,7 @@ class ChallengeProducer:
         self._validator = validator
         self._diff_cfg = diff_cfg
         self._default_difficulty = default_difficulty
+        self._MAX_DIFFICULTY = {"hstab": 50.0}
 
         # strategy
         self._strategies: Dict[str, _KindStrategy] = {
@@ -82,6 +83,10 @@ class ChallengeProducer:
             "hstab": _KindStrategy(0.5, build_hstab_challenge),
         }
         self._weights_cache = [s.weight for s in self._strategies.values()]
+
+        # one peaked one hstab per UID
+        self._pending_uid: int | None = None
+        self._pending_kind: str | None = None
 
     # Start producer
     def start(self) -> None:
@@ -104,28 +109,43 @@ class ChallengeProducer:
     # Public
     def update_uid_list(self, new_uids: List[int]) -> None:
         """
-        Replace the UID ring while preserving position so we dont
-        miss a subset of miners when the set changes.
+        Replace the UID ring while preserving position:
+        - keep the same UID if it still exists,
+        - otherwise advance through the old list (wrap-around) until a match is found.
         """
         with self._uid_lock:
-            current_uid = (
-                self._uid_list[self._uid_index]
-                if self._uid_list and self._uid_index < len(self._uid_list)
-                else None
-            )
+            old_list = self._uid_list or []
+            has_valid_idx = old_list and 0 <= self._uid_index < len(old_list)
+            current_uid = old_list[self._uid_index] if has_valid_idx else None
 
-            self._uid_list = new_uids
-            if current_uid in new_uids:
-                self._uid_index = (new_uids.index(current_uid) + 1) % len(new_uids)
+            new_set = set(new_uids)
+
+            # Decide which UID we want to land on
+            target_uid = None
+            if current_uid in new_set:
+                # keep the same UID
+                target_uid = current_uid
             else:
+                # move to the next from the old list, wrapping, until a match is found
+                if has_valid_idx and old_list:
+                    for step in range(1, len(old_list) + 1):
+                        cand = old_list[(self._uid_index + step) % len(old_list)]
+                        if cand in new_set:
+                            target_uid = cand
+                            break
+
+            # Apply the new list and set the index
+            self._uid_list = new_uids
+            if new_uids and target_uid is not None:
+                self._uid_index = new_uids.index(target_uid)
+            else:
+                # fallback if no matches or empty list
                 self._uid_index = 0
 
             # prune stash for removed miners
             self._stash = {u: self._stash.get(u, []) for u in new_uids}
 
-            bt.logging.info(
-                f"[challenge-producer] UID list updated - {len(new_uids)} miners"
-            )
+            bt.logging.info(f"[challenge-producer] UID list updated - {len(new_uids)} miners")
 
     # Thread body
     def _loop(self) -> None:
@@ -142,12 +162,40 @@ class ChallengeProducer:
                 continue
 
             try:
-                uid = self._next_uid()
-                syn, meta, target = self._build_challenge_for_uid(uid)
-                self.queue.put_nowait(QItem(uid, syn, meta, target, file_path=None))
-                bt.logging.trace(
-                    f"[challenge-producer] queued {meta.circuit_kind} for UID {uid}"
-                )
+                if self._pending_uid is not None and self._pending_kind is not None:
+                    uid = self._pending_uid
+                    syn, meta, target = self._build_challenge_of_kind(uid, self._pending_kind)
+                    self.queue.put_nowait(QItem(uid, syn, meta, target, file_path=None))
+                    bt.logging.trace(
+                        f"[challenge-producer] queued {meta.circuit_kind} for UID {uid} (pending)"
+                    )
+                    self._pending_uid = None
+                    self._pending_kind = None
+                else:
+                    uid = self._next_uid()
+
+                    room_for_two = (
+                        (self.queue.maxsize == 0) or
+                        (self.queue.qsize() <= max(0, self.queue.maxsize - 2))
+                    )
+
+                    # peaked
+                    syn1, meta1, target1 = self._build_challenge_of_kind(uid, "peaked")
+                    self.queue.put_nowait(QItem(uid, syn1, meta1, target1, file_path=None))
+                    bt.logging.trace(
+                        f"[challenge-producer] queued {meta1.circuit_kind} for UID {uid}"
+                    )
+
+                    if room_for_two:
+                        # hstab
+                        syn2, meta2, target2 = self._build_challenge_of_kind(uid, "hstab")
+                        self.queue.put_nowait(QItem(uid, syn2, meta2, target2, file_path=None))
+                        bt.logging.trace(
+                            f"[challenge-producer] queued {meta2.circuit_kind} for UID {uid}"
+                        )
+                    else:
+                        self._pending_uid = uid
+                        self._pending_kind = "hstab"
             except Exception:
                 bt.logging.error("[challenge-producer] error", exc_info=True)
 
@@ -155,19 +203,32 @@ class ChallengeProducer:
 
     # Challenge creation
     def _build_challenge_for_uid(self, uid: int) -> Tuple[Any, ChallengeMeta, str]:
-        kind = random.choices(
-            population=list(self._strategies.keys()),
-            weights=self._weights_cache,
-            k=1,
-        )[0]
+        return self._build_challenge_of_kind(uid, "peaked")
 
+    def _build_challenge_of_kind(self, uid: int, kind: str) -> Tuple[Any, ChallengeMeta, str]:
+        kind = (kind or "").lower()
+        if kind not in self._strategies:
+            raise ValueError(f"Unknown challenge kind: {kind!r}")
         strat = self._strategies[kind]
-        difficulty = self._diff_cfg[kind].get(uid)
+
+        difficulty_cfg = self._diff_cfg.get(kind)
+        if difficulty_cfg is None:
+            raise KeyError(f"Missing difficulty config for kind: {kind}")
+
+        difficulty = difficulty_cfg.get(uid)
+        if difficulty is None:
+            difficulty = self._default_difficulty
+
+        cap = self._MAX_DIFFICULTY.get(kind)
+        if cap is not None and difficulty > cap: # caps hstab at 50
+            difficulty = cap
+
         syn, meta, target = strat.builder(
             wallet=self._wallet,
             difficulty=difficulty,
         )
         return syn, meta, target
+
 
     # UID handler
     def _next_uid(self) -> int:

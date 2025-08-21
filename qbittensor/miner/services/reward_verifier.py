@@ -7,7 +7,7 @@ def reward_is_valid(syn):
             signature_hex=syn.validator_signature,
             validator_hotkey_ss58=syn.validator_hotkey,
             challenge_id=syn.challenge_id,
-            entanglement_entropy=syn.entanglement_entropy,
+            entanglement_entropy=0.0,
         )
     except Exception:
         return False
