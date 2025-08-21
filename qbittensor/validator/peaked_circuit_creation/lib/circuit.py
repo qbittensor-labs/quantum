@@ -5,6 +5,7 @@ import multiprocessing
 import random
 from typing import *
 import numpy as np
+import bittensor as bt
 from .decompose import (optim_decomp, cnots, ising)
 
 class Gate:
@@ -618,7 +619,7 @@ class PeakedCircuit:
         # cnot or ising decomp based on seed
         choice = hash(str(seed)) % 2
         decomp_method = "CNOT" if choice == 0 else "Ising"
-        print(f"convert to ordinary gates (using {decomp_method} decomposition):")
+        bt.logging.info(f"convert to ordinary gates (using {decomp_method} decomposition):")
 
         # this assumes every qubit is touched
         num_qubits = max(max(uni.target0, uni.target1) for uni in unis) + 1
