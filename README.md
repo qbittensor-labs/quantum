@@ -111,11 +111,8 @@ The main scoring function is a weighted sum of **entanglement entropy** and a **
 
 | Symbol | Formula | Notes |
 |--------|---------|-------|
-| **Smax** | `Smax = (n / 2)·ln 2 − (ln 2)²` | Max theoretical entanglement entropy for *n* qubits. |
-| **F** (entropy) | `F = entropy / Smax` → **[0, 1]** | Normalized to 0-1. |
 | **G** (size) | piece-wise (see below) | Rewards larger circuits. |
-| **C** (combined) | `C = w_F·F + (1−w_F)·G` | Default `w_F = 0.3`. |
-| **Decay** | `Cₜ = C·e^(−λ·t)` | `λ = ln 2 / 24 h` ⇒ half-life 24 h. |
+| **Decay** | `Cₜ = C·e^(−λ·t)` | `λ = ln 2 / 24 h` ⇒ half-life 72 h. |
 
 ---
 
@@ -126,18 +123,24 @@ knee       = 32 # inflection point (qubits)
 target     = 50 # maximum score at 50 qubits
 min_G      = 0.15 # minimum score at 12 qubits
 knee_score = 0.40 # score at the knee
+exponential_base = 1.7
 
 if n <= knee: # 12 ≤ n ≤ 32
     t = (n − 12) / (knee − 12)
     G = min_G + (knee_score − min_G) * t # linear 0.15 → 0.40
 else: # n > 32
     t = (n − knee) / (target − knee)
-    G = knee_score + (1 − knee_score) * t**1.5 # smooth rise 0.40 → 1.00
+    G = knee_score + (1 − knee_score) * t**1.7 # smooth rise 0.40 → 1.00
 ```
-The Knee value is set at 32 qubits, creating a piecewise function that disproportionately rewards Miners that can run circuits larger than 32 qubits. Memory requirements make higher qubit counts beyond this size increasingly difficult. **Miners will need clever ideas and/or SOTA hardware to go much beyond 32 qubits.**
+The Knee value is set at 32 qubits, creating a piecewise function that disproportionately rewards Miners that can run circuits larger than 32 qubits. Memory requirements make higher qubit counts beyond this size increasingly difficult. **Miners will need clever ideas and/or SOTA hardware to go much beyond 32 qubits for Peaked Circuits.**
 
-We expect Miners to innovate quickly and will adjust this function accordingly. The simplest change will be to move the Knee to a higher qubit count but close monitoring of Miners' performance will better inform our decisions around this. Miners will be given adequate notice of any change to scoring.
+Hidden Stabilizer circuits are scored similarly with a knee at 26. 
 
+A final score is calculated by combining the Peaked Circuit score with a weight of 80% and a Hidden Stabilizer score with a weight of 20%:
+
+```python
+combined = 0.8 * peaked_norm + 0.2 * hstab_norm
+```
 
 ## Strategic Roadmap: Our Future Vision
 qBitTensor is just getting started. Our strategic roadmap outlines a progression towards a fully decentralized, high-impact quantum platform:
