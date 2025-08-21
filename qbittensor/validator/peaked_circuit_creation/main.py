@@ -1,14 +1,13 @@
 import torch
-from lib.circuit_gen import DEVICE, CircuitParams
-
+from lib.circuit_gen import CircuitParams, DEVICE
 
 def main():
     # This is for debug
-    if DEVICE == "cuda":
+    if DEVICE == 'cuda':
         print(f"Using GPU: {torch.cuda.get_device_name(0)}")
     else:
         print("Using CPU")
-
+    
     difficulty_level = 1.0
     seed = 1054
     circuit_params = CircuitParams.from_difficulty(difficulty_level)
@@ -20,7 +19,6 @@ def main():
     print(qasm_out)
     print("Target state")
     print(circuit.target_state)
-
 
 if __name__ == "__main__":
     main()

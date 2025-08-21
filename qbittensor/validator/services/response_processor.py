@@ -12,6 +12,9 @@ from qbittensor.validator.utils.challenge_logger import (
 )
 from qbittensor.common.certificate import Certificate
 from qbittensor.validator.utils.uid_utils import as_int_uid
+from qbittensor.validator.utils.challenge_utils import (
+    _convert_peaked_difficulty_to_qubits,
+)
 
 RPC_DEADLINE = 10  # seconds
 _CUTOFF_TS = dt.datetime(2025, 8, 6, 12, 0, 0, tzinfo=timezone.utc) # legacy certs
@@ -24,11 +27,11 @@ class ResponseProcessor:
     and update DifficultyConfig
     """
 
-    def __init__(self, validator: "Validator"):
+    def __init__(self, validator):
         self.v = validator
 
     # public entry
-    def process(self, item: "ChallengeProducer.QItem", miner_hotkey: str) -> None:
+    def process(self, item, miner_hotkey: str) -> None:
         uid, syn, meta, target_state, _ = item
         bt.logging.info(f"[send] ▶️  UID {uid}   cid={meta.challenge_id[:10]}")
         _service_one_uid(self.v, uid, syn, meta, target_state, miner_hotkey)
@@ -36,7 +39,7 @@ class ResponseProcessor:
 
 # internal worker
 def _service_one_uid(
-    v: "Validator", uid: int, syn, meta, target_state: str, miner_hotkey: str
+    v, uid: int, syn, meta, target_state: str, miner_hotkey: str
 ) -> None:
     """
     Send syn to miner *uid* and handle the reply.
@@ -90,6 +93,8 @@ def _service_one_uid(
         return
 
     resp = resp_list[0]
+
+    kind = getattr(resp, "circuit_kind", getattr(meta, "circuit_kind", "")).lower() or "peaked"
 
     # certificates
     total = inserted = 0
@@ -145,7 +150,14 @@ def _service_one_uid(
 
     # solutions
     stored = 0
-    for sol in SolutionExtractor.extract(resp):
+    sols = list(SolutionExtractor.extract(resp))
+    for sol in sols:
+        # Guarantee per-solution circuit type so SolutionProcessor wont default to peaked
+        if not getattr(sol, "circuit_type", None):
+            try:
+                sol.circuit_type = kind
+            except Exception:
+                pass
         if v._sol_proc.process(
             uid=uid,
             miner_hotkey=miner_hotkey,
@@ -157,7 +169,6 @@ def _service_one_uid(
     if stored:
         bt.logging.info(f"[solution] ✅ Processed solutions from UID {uid}")
 
-    # difficulty feedback
     desired = getattr(resp, "desired_difficulty", None)
     if desired is None:
         for sol in SolutionExtractor.extract(resp):
@@ -167,18 +178,37 @@ def _service_one_uid(
     if desired is None:
         return
 
-    kind = getattr(resp, "circuit_kind", getattr(meta, "circuit_kind", "")).lower()
-
     cfg = _select_diff_cfg(v, kind)  # will raise if kind unknown
-    current = cfg.get(uid)
+    current = float(cfg.get(uid))
+
     if kind == "hstab":
-        cap = 100.0
+        cap = 50.0
+        new_diff = max(0.0, min(float(desired), cap))
+
     elif kind == "peaked":
-        cap = current + 0.4
+        MIN_Q = 16.0
+        MAX_Q = 40.0
+        STEP  = 7.0
+
+        if 0.0 <= current <= 10.0:
+            current = float(_convert_peaked_difficulty_to_qubits(current))
+
+        current_q = current if current > 0.0 else 30.0
+        cap = min(MAX_Q, current_q + STEP)
+
+        try:
+            desired_val = float(desired)
+        except Exception:
+            desired_val = current_q
+
+        if 0.0 <= desired_val <= 10.0:
+            desired_val = float(_convert_peaked_difficulty_to_qubits(desired_val))
+
+        new_q = max(MIN_Q, min(desired_val, cap))
+        new_diff = new_q
+
     else:  # defensive: should never happen
         raise ValueError(f"Unhandled circuit kind {kind!r}")
-
-    new_diff = max(0.0, min(float(desired), cap))
     bt.logging.debug(
         f"[difficulty] {kind} → file {cfg._path.name} "
         f"uid {uid}: {current:.3f} → {new_diff:.3f}"

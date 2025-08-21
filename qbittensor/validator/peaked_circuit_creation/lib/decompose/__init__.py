@@ -1,12 +1,15 @@
 from __future__ import annotations
-
-from typing import Callable, Optional
-
+from itertools import product
+from typing import *
 import numpy as np
 from scipy.optimize import minimize
+import qbittensor.validator.peaked_circuit_creation.lib.decompose.cnots as cnots
+import qbittensor.validator.peaked_circuit_creation.lib.decompose.ising as ising
 
-ObjectiveFn = Callable[[np.ndarray[complex, 2], np.ndarray[float, 1]], float]
-
+ObjectiveFn = Callable[
+    [np.ndarray[complex, 2], np.ndarray[float, 1]],
+    float
+]
 
 def optim_decomp(
     U_target: np.ndarray[complex, 2],
@@ -35,12 +38,16 @@ def optim_decomp(
     # use a completely fixed generator here to keep decompositions consistent
     # without affecting global state, and without requiring a `seed` parameter
     gen = np.random.Generator(np.random.PCG64(10546))
-    params0 = max((2 * np.pi * gen.random(size=15) for _ in range(2000)), key=lambda params: fidelity(U_target, params))
+    params0 = max(
+        (2 * np.pi * np.random.random(size=15) for _ in range(2000)),
+        key=lambda params: fidelity(U_target, params)
+    )
     optim_res = minimize(
         lambda params, targ: -fidelity(targ, params),
         params0,
         args=(U_target,),
         tol=epsilon,
-        options=dict(maxiter=10000),
+        options=dict(maxiter=10000)
     )
     return optim_res.x
+

@@ -1,124 +1,20 @@
 import warnings
 from dataclasses import dataclass
+import time
 
 import bittensor as bt
 import cotengra as ctg
 import numpy as np
 import quimb.tensor as qtn
 import torch
-import tqdm
 from torch import optim
 
 from qbittensor.validator.peaked_circuit_creation.lib.circuit import (
     SU4, PeakedCircuit)
-from qbittensor.validator.peaked_circuit_creation.peaked_circuits.functions import \
-    range_unitary
 
-
-@dataclass
-class CircuitParams:
-    """
-    High-level description of peaked circuit parameters.
-
-    Fields:
-        difficulty (float):
-            The difficulty level of the circuit, should be `0 <= level <= 5`.
-        nqubits (int):
-            The number of qubits, should be positive.
-        rqc_depth (int):
-            The number of randomizing circuit layers, should be positive.
-        pqc_depth (int):
-            The number of peaking circuit layers, should be positive.
-    """
-
-    difficulty: float
-    nqubits: int
-    rqc_depth: int  # randomized circuit depth
-    pqc_depth: int  # peaking circuit depth
-
-    @staticmethod
-    def from_difficulty(level: float):
-        """
-        Determine the parameters for a circuit based on a single difficulty
-        level, defined for `0 <= level <= 5`.
-
-        Args:
-            level (float):
-                Floating-point difficulty level, with 0 being the lowest
-                difficulty. Must be 0 to 5 (inclusive).
-
-        Returns:
-            params (CircuitParams):
-                Data struct containing a number of qubits, RQC depth, and PQC
-                depth for the difficulty level.
-
-        Raises:
-            ValueError if `level` is less than 0 or greater than 5.
-        """
-        # if level < 0 or level > 5:
-        #    raise ValueError("invalid difficulty level: must be 0 to 5")
-        nqubits = int(12 + 10 * np.log2(level + 3.9))
-        rqc_mul = 150 * np.exp(-nqubits / 4) + 0.5
-        rqc_depth = round(rqc_mul * nqubits)
-        pqc_depth = max(1, nqubits // 5)
-        return CircuitParams(level, nqubits, rqc_depth, pqc_depth)
-
-    def compute_circuit(self, seed: int) -> PeakedCircuit:
-        """
-        Construct a randomized `PeakedCircuit` according to `self`, with fixed
-        seed. The value of `seed` determines only the target peaked state (i.e.
-        a fixed seed will generate circuits that output states with peaking in
-        the same target state, but the gates may be different).
-
-        Args:
-            seed (int):
-                Seed value for circuit generation.
-
-        Returns:
-            circuit (PeakedCircuit):
-                Output peaked circuit.
-        """
-        gen = np.random.Generator(np.random.PCG64(seed))
-        target_state = "".join("1" if gen.random() < 0.5 else "0" for _ in range(self.nqubits))
-        peaking_threshold = max(20, 10 ** (0.38 * self.difficulty + 2.102))
-        (rqc, pqc, peak_prob) = make_circuit(
-            target_state,
-            self.rqc_depth,
-            self.pqc_depth,
-            seed,
-            target_peaking=peaking_threshold,
-        )
-        # convert tensors to ordinary 2D numpy arrays -- have to get qubit
-        # indices right for brickwork circuits
-        unis = list()
-        q0 = 0
-        depth = 0
-        for tens in rqc:
-            mat = tens.data.cpu().resolve_conj().numpy().reshape((4, 4))
-            unis.append(SU4(q0, q0 + 1, mat))
-            q0 += 2
-            if q0 >= self.nqubits - 1:
-                depth += 1
-                q0 = depth % 2
-        # the pqc tensors were generated in "backwards" (i.e. reversed time and
-        # space) order; the time is properly reversed at the end of
-        # `make_circuit`, but we need to deal with space here by reversing the
-        # counting order for qubit indices
-        dshift = (self.nqubits + self.pqc_depth + 1) % 2
-        q1 = self.nqubits - 1 - (depth + dshift) % 2
-        for tens in pqc:
-            mat = tens.data.cpu().resolve_conj().numpy().reshape((4, 4))
-            unis.append(SU4(q1 - 1, q1, mat))
-            q1 -= 2
-            if q1 <= 0:
-                depth += 1
-                q1 = self.nqubits - 1 - (depth + dshift) % 2
-        return PeakedCircuit.from_su4_series(target_state, peak_prob, unis, seed)
-
-
-# Determine device for tensor operations
+# --- Main Configuration ---
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Using device: {DEVICE} (CUDA available: {torch.cuda.is_available()})")
+bt.logging.info(f"Using device: {DEVICE} (CUDA available: {torch.cuda.is_available()})")
 
 opti = ctg.ReusableHyperOptimizer(
     progbar=False,
@@ -129,200 +25,242 @@ opti = ctg.ReusableHyperOptimizer(
 )
 
 
-def norm_fn(psi: qtn.TensorNetwork):
-    """
-    Normalize the tensors in a network in place so that they are physically
-    correct (i.e. unitary and obey the usual Born/probability rules).
+# --- Utility and Model Functions (Largely Unchanged) ---
 
-    Args:
-        psi (quimb.tensor.TensorNetwork):
-            Tensor network whose tensors are to be normalized.
-    """
-    # parametrize our tensors as isometric/unitary
+def rand_gpu_unitary(n, dtype=torch.complex64, device=DEVICE):
+    """Generates a random n x n unitary matrix on the GPU."""
+    a = torch.randn(n, n, dtype=dtype, device=device)
+    q, _ = torch.linalg.qr(a)
+    return q
+
+def range_unitary_gpu(
+    psi, i_start, n_apply, list_u3, depth, n_Qbit, Qubit_ara, rand=True, start_layer=0
+):
+    """Applies random unitary gates to the tensor network on the GPU."""
+    if n_Qbit <= 1:
+        depth = 1
+
+    for r in range(depth):
+        is_even_layer = (r + start_layer) % 2 == 0
+        start_idx = i_start
+        end_idx = i_start + n_Qbit if is_even_layer else i_start + n_Qbit - 1
+        
+        for i in range(start_idx, end_idx, 2):
+            q1 = i if is_even_layer else i + 1
+            q2 = q1 + 1
+            G = rand_gpu_unitary(4, device=DEVICE) if rand else torch.eye(4, dtype=torch.complex64, device=DEVICE)
+            psi.gate_(G, (q1, q2), tags={"U", f"G{n_apply}", f"lay{Qubit_ara}", f"P{Qubit_ara}L{i}D{r}"})
+            list_u3.append(f"G{n_apply}")
+            n_apply += 1
+    return n_apply, list_u3
+
+def norm_fn(psi: qtn.TensorNetwork):
+    """Isometrizes the tensors in a network in place."""
     return psi.isometrize(method="cayley")
 
-
-def loss_fn(
-    const: qtn.TensorNetwork,
-    opt: qtn.TensorNetwork,
-) -> qtn.Tensor | torch.Tensor:
-    """
-    Compute the loss function for peaked circuit optimization.
-
-    Args:
-        const (quimb.tensor.TensorNetwork):
-            The network of "constant" tensors, containing:
-                - the inital (all-zero) state
-                - the randomizing circuit
-                - the target output state
-        opt (quimb.tensor.TensorNetwork):
-            The network of optimized tensors, containing:
-                - the peaking circuit
-
-    Returns:
-        state_prob (quimb.tensor.Tensor or torch.Tensor):
-            Scalar giving the probability of the target output state, as a
-            (rank-0) tensor.
-    """
-    return -abs((const.H & opt).contract(all, optimize=opti)) ** 2
-
+def loss_fn(const: qtn.TensorNetwork, opt: qtn.TensorNetwork) -> torch.Tensor:
+    """Computes the loss for optimization."""
+    amplitude = (const.H & opt).contract(all, optimize=opti)
+    return -torch.abs(amplitude) ** 2
 
 class TNModel(torch.nn.Module):
-    def __init__(self, opt, const):
+    """A PyTorch module that wraps a quimb tensor network for optimization."""
+    def __init__(self, opt_tn: qtn.TensorNetwork, const_tn: qtn.TensorNetwork):
         super().__init__()
-        self.const = const
-        params, self.skeleton = qtn.pack(opt)
-        self.torch_params = torch.nn.ParameterDict(
-            {
-                # torch requires strings as keys
-                str(i): torch.nn.Parameter(initial)
-                for (i, initial) in params.items()
-            }
-        )
+        self.const = const_tn
+        params, self.skeleton = qtn.pack(opt_tn)
+        self.torch_params = torch.nn.ParameterDict({
+            str(i): torch.nn.Parameter(initial_data)
+            for i, initial_data in params.items()
+        })
 
-    def forward(self):
-        # convert back to original int key format
-        params = {int(i): p for (i, p) in self.torch_params.items()}
-        # reconstruct the TN with the new parameters
+    def forward(self) -> torch.Tensor:
+        params = {int(i): p for i, p in self.torch_params.items()}
         psi = qtn.unpack(params, self.skeleton)
         return loss_fn(self.const, norm_fn(psi))
 
 
-def make_qmps(
-    state: str,
-    depth: int,
-    start_layer: int,
-    seed_val: int,
-) -> qtn.TensorNetwork:
-    """
-    Construct a new tensor network corresponding to a matrix product state
-    attached to a randomized brickwork circuit of depth `depth`. `start_layer`
-    is used to offset the initial left-most gate in the randomized circuit.
+# --- Refactored Circuit Generation Logic ---
 
-    Args:
-        state (str):
-            Initial MPS state before the brickwork circuit. Every character in
-            this string should be either '0' or '1'.
-        depth (int):
-            Depth of the randomized brickwork circuit.
-        start_layer (int):
-            Used to determine whether the left-most gate on the first layer
-            starts at qubit 0 or qubit 1.
-        seed_val (int):
-            Initial seed value used to generate the brickwork gates.
-
-    Returns:
-        qmps (quimb.tensor.TensorNetwork):
-            The resulting matrix product state with randomized brickwork
-            circuit, as a tensor network.
+def prepare_model_for_seed(target_state, rqc_depth, pqc_depth, seed):
     """
+    Builds the initial tensor networks and TNModel for a given seed.
+    This function is now deterministic based on the seed.
+    """
+    nqubits = len(target_state)
+    
+    torch.manual_seed(seed)
+    
+    init_rqc = make_qmps(nqubits * "0", rqc_depth, 0)
+    target_pqc = make_qmps(target_state, pqc_depth, rqc_depth % 2)
+
+    const = init_rqc & target_pqc.tensors[:nqubits]
+    opt = qtn.TensorNetwork(target_pqc.tensors[nqubits:])
+
+    model = TNModel(opt, const)
+    model.to(DEVICE)
+    
+    # CORRECTED LINE: Get the skeleton from the 'model' object
+    return model, const, init_rqc, model.skeleton
+
+def make_qmps(state: str, depth: int, start_layer: int) -> qtn.TensorNetwork:
+    """Constructs a tensor network on the GPU. Relies on external torch.manual_seed."""
     L = len(state)
-    psi = qtn.MPS_computational_state(state)
+    psi = qtn.MPS_computational_state(state).astype_("complex64")
+    psi.apply_to_arrays(lambda x: torch.from_numpy(x).to(device=DEVICE, dtype=torch.complex64))
     for k in range(L):
         psi[k].modify(left_inds=[f"k{k}"], tags=[f"I{k}", "MPS"])
-    range_unitary(
-        psi, 0, 0, list(), depth, L - 1, "float64", seed_val, L - 1, uni_list=None, rand=True, start_layer=start_layer
+    
+    range_unitary_gpu(
+        psi, i_start=0, n_apply=0, list_u3=[], depth=depth, n_Qbit=L - 1, 
+        Qubit_ara=L - 1, rand=True, start_layer=start_layer
     )
-    return psi.astype_("complex128")
+    return psi
 
-
-def make_torch(tn: qtn.TensorNetwork):
-    """
-    Convert all tensors in a network to complex torch tensors on `DEVICE`.
-    """
-    tn.apply_to_arrays(lambda x: torch.tensor(x, dtype=torch.complex128, device=DEVICE))
-
-
-def make_circuit(
+def find_lucky_seed_and_make_circuit(
     target_state: str,
     rqc_depth: int,
     pqc_depth: int,
-    seed: int,
+    base_seed: int,
     target_peaking: float = 1000.0,
 ) -> tuple[list[qtn.Tensor], list[qtn.Tensor], float]:
     """
-    Construct a brickwork peaking circuit producing `target_state` as its peaked
-    output.
-
-    Args:
-        target_state (str):
-            The computational basis state on which to produce a peak. Should be
-            a string of only '0' or '1'.
-        rqc_depth (int):
-            The number of initial brickwork randomizing layers.
-        pqc_depth (int):
-            The number of peaking brickwork layers.
-        seed (int):
-            Used for initial sampling of the randomizing and peaking gates.
-        target_peaking (float, optional):
-            Terminate optimization when the ratio of the target state's
-            probability to the N-qubit uniform probability (1/2^N) crosses this
-            threshold.
-
-    Returns:
-        rqc (list[torch.Tensor]):
-            Tensors corresponding to gates in the initial randomizing circuit.
-            This list is ordered first by left-to-right qubit order, starting at
-            the leftmost qubit (qubit 0), and then by increasing circuit depth.
-            These tensors are returned conjugated; call `.resolv_conj()` to get
-            the exact matrix elements of the gate.
-        pqc (list[torch.Tensor]):
-            Tensors corresponding to gates in the peaking circuit. This list is
-            ordered first by *right-to-left* qubit order, with the starting
-            rightmost qubit determined by the RQC depth, and then by increasing
-            circuit depth.
-        target_prob (float):
-            The output probability of the target basis state.
+    Pre-screens multiple seeds to find a "lucky" one, then runs the full
+    optimization on that seed.
     """
-    # generate inital set of tensors:
-    #   * `init_rqc[:nqubits]`: initial (all-zero state)
-    #   * `init_rqc[nqubits:]`: randomizing circuit
-    #   * `target_pqc[:nqubits]`: target state
-    #   * `target_pqc[nqubits:]`: peaking circuit (to be optimized)
     nqubits = len(target_state)
-    init_rqc = make_qmps(nqubits * "0", rqc_depth, 0, seed)
-    make_torch(init_rqc)
-    target_pqc = make_qmps(target_state, pqc_depth, rqc_depth % 2, seed)
-    make_torch(target_pqc)
-
-    # separate all the tensors corresponding to the input state, the target
-    # state, and the randomized gates out into a network of "constants"
-    const = init_rqc & target_pqc.tensors[:nqubits]
-    # the rest are exactly the peaking gates, to be optimized below
-    opt = qtn.TensorNetwork(target_pqc.tensors[nqubits:])
-
-    # now do tensor network optimization to actually peak the target state
-    maxiters = 1000
-    model = TNModel(opt, const)
-    model()
     
-    # Note: JIT tracing disabled to prevent memory issues
-    # We now scale lr here based on qubit count to prevent low peaking for higher diff
-    optimizer = optim.AdamW(model.parameters(), lr=max(0.001, 10 ** (nqubits / 4 - 11)))
-    pbar = tqdm.tqdm(range(maxiters), disable=True)
-    for step in pbar:
+    # --- Part 1: Search for the "Luckiest" Seed ---
+    NUM_SEEDS_TO_TRY = 20
+    seed_losses = {}
+
+    bt.logging.info(f"Pre-screening {NUM_SEEDS_TO_TRY} seeds by initial loss...")
+
+    # Use torch.no_grad() as we are not training, only evaluating.
+    with torch.no_grad():
+        for i in range(NUM_SEEDS_TO_TRY):
+            candidate_seed = base_seed + i
+            model, _, _, _ = prepare_model_for_seed(
+                target_state, rqc_depth, pqc_depth, candidate_seed
+            )
+            
+            # THIS IS THE NEW, FAST TEST: Just one forward pass
+            initial_loss = model()
+            
+            seed_losses[candidate_seed] = initial_loss.item()
+
+    # Find the seed that resulted in the best (most negative) loss
+    best_seed = min(seed_losses, key=seed_losses.get)
+    bt.logging.info(f"✅ Selected champion seed: {best_seed} (Loss: {seed_losses[best_seed]:.4e})")
+
+    # --- Part 2: Run Full Optimization with the Best Seed ---
+    
+    # Re-create the model from scratch with the best seed to start fresh
+    model, const, init_rqc, skeleton = prepare_model_for_seed(
+        target_state, rqc_depth, pqc_depth, best_seed
+    )
+
+    # Set up the main optimizer
+    #lr = max(0.001, 10 ** (nqubits / 4 - 11))
+    lr = 5e-2
+    optimizer = optim.AdamW(model.parameters(), lr=lr)
+
+    # Main optimization loop
+    maxiters = 1000
+    start_opt_loop = time.perf_counter()
+    
+    for step in range(maxiters):
         optimizer.zero_grad()
         loss = model()
         loss.backward()
         optimizer.step()
-        pbar.set_description(f"{loss:.6e}")
-        if step % 20 == 0:
-            bt.logging.info(f"Circuit generation: Step {step}/{maxiters}, Current Loss: {loss:.6e}")
+        
+        if step % 100 == 0:
+            bt.logging.debug(f"Step {step}/{maxiters}, Loss: {loss.item():.6e}")
 
-        # early stop if the peaking ratio is larger than the target
-        if -loss * 2**nqubits > target_peaking:
-            print(f"\nEarly stop: peak is >{target_peaking:g}x uniform")
+        if -loss.item() * 2**nqubits > target_peaking:
+            bt.logging.info(f"Early stop at step {step}: peak > {target_peaking:g}x uniform")
             break
+            
+    opt_loop_time = time.perf_counter() - start_opt_loop
+    bt.logging.info(f"Optimization loop finished in {opt_loop_time:.4f} seconds.")
 
-    # return the initial random circuit (without initial state tensors), the
-    # peaking circuit, and the final probability of the target state
-    opt = norm_fn(opt)
+    # --- Part 3: Post-process and Return Results ---
+    with torch.no_grad():
+        final_params = {int(i): p.data for i, p in model.torch_params.items()}
+        opt_final = qtn.unpack(final_params, skeleton)
+        opt_final_norm = norm_fn(opt_final)
+        final_loss = loss_fn(const, opt_final_norm)
+        target_weight = float(-final_loss.item())
+
     rqc_tensors = list(init_rqc.H.tensors[nqubits:])
-    pqc_tensors = list(opt.tensors[::-1])
-    target_weight = float(-loss_fn(const, opt))
+    pqc_tensors = list(opt_final_norm.tensors[::-1])
     
-
     opti.cleanup()
     bt.logging.debug("Cleared cotengra optimizer cache")
     
-    return (rqc_tensors, pqc_tensors, target_weight)
+    return rqc_tensors, pqc_tensors, target_weight
+
+
+@dataclass
+class CircuitParams:
+    """High-level description of peaked circuit parameters."""
+    difficulty: float
+    nqubits: int
+    rqc_depth: int
+    pqc_depth: int
+
+    @staticmethod
+    def from_difficulty(level: float):
+        nqubits = int(12 + 10 * np.log2(level + 3.9))
+        rqc_mul = 150 * np.exp(-nqubits / 4) + 0.5
+        rqc_depth = round(rqc_mul * nqubits)
+        pqc_depth = max(1, nqubits // 5)
+        return CircuitParams(level, nqubits, rqc_depth, pqc_depth)
+
+    def compute_circuit(self, seed: int) -> PeakedCircuit:
+        """Constructs a PeakedCircuit, now with the lucky seed search."""
+        start_time = time.perf_counter()
+        
+        # Use numpy's generator for the target bitstring, which is independent
+        # of the circuit's random gates.
+        gen = np.random.Generator(np.random.PCG64(seed))
+        target_state = "".join("1" if gen.random() < 0.5 else "0" for _ in range(self.nqubits))
+        peaking_threshold = max(20, 10 ** (0.38 * self.difficulty + 2.102))
+
+        # The `seed` is now the `base_seed` for the search
+        (rqc, pqc, peak_prob) = find_lucky_seed_and_make_circuit(
+            target_state,
+            self.rqc_depth,
+            self.pqc_depth,
+            base_seed=seed, # The original seed starts the search
+            target_peaking=peaking_threshold,
+        )
+        make_circuit_time = time.perf_counter() - start_time
+        bt.logging.info(f"Total time for make_circuit: {make_circuit_time:.4f} seconds")
+
+        # ... (rest of the function for converting to SU4 is unchanged) ...
+        start_conversion = time.perf_counter()
+        unis = list()
+        q0 = 0
+        depth = 0
+        for tens in rqc:
+            mat = tens.data.resolve_conj().cpu().numpy().reshape((4, 4))
+            unis.append(SU4(q0, q0 + 1, mat))
+            q0 += 2
+            if q0 >= self.nqubits - 1:
+                depth += 1
+                q0 = depth % 2
+        dshift = (self.nqubits + self.pqc_depth + 1) % 2
+        q1 = self.nqubits - 1 - (depth + dshift) % 2
+        for tens in pqc:
+            mat = tens.data.resolve_conj().cpu().numpy().reshape((4, 4))
+            unis.append(SU4(q1 - 1, q1, mat))
+            q1 -= 2
+            if q1 <= 0:
+                depth += 1
+                q1 = self.nqubits - 1 - (depth + dshift) % 2
+        conversion_time = time.perf_counter() - start_conversion
+        bt.logging.info(f"Time for final conversion to SU4 (GPU->CPU): {conversion_time:.4f} seconds")
+
+        return PeakedCircuit.from_su4_series(target_state, peak_prob, unis, seed)
