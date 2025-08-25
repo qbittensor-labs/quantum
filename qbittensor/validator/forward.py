@@ -133,8 +133,8 @@ def _bootstrap(v: _ValidatorLike) -> None:
         v._dispatcher_thread = threading.Thread(target=_dispatcher_loop, args=(v,), name="Dispatcher", daemon=True)
         v._dispatcher_thread.start()
 
-def _dispatcher_loop(v: "Validator") -> None:
-    while True:
+def _dispatcher_loop(v: _ValidatorLike) -> None:
+    while not getattr(v, "_shutdown_event", threading.Event()).is_set():
         try:
             item = v._queue.get_nowait()
         except queue.Empty:
@@ -151,6 +151,7 @@ def _dispatcher_loop(v: "Validator") -> None:
                 time.sleep(_DISPATCH_SLEEP)
                 continue
         _handle_item(v, item)
+    bt.logging.info("[dispatcher] shutdown signal received; exiting dispatcher loop")
 
 _dendrite_lock = threading.Lock()
 
@@ -236,6 +237,13 @@ def shutdown(v: _ValidatorLike, timeout_s: float | None = None) -> None:
     except Exception:
         bt.logging.warning("[shutdown] error stopping producer", exc_info=True)
 
+    try:
+        th = getattr(v, "_dispatcher_thread", None)
+        if th and th.is_alive():
+            th.join(timeout=5.0)
+    except Exception:
+        pass
+
     t0 = time.time()
     try:
         while True:
@@ -249,20 +257,6 @@ def shutdown(v: _ValidatorLike, timeout_s: float | None = None) -> None:
                 import os as _os
                 _os._exit(1)
             time.sleep(0.25)
-    except Exception:
-        pass
-
-    try:
-        if hasattr(v, "_executor") and v._executor:
-            v._executor.shutdown(wait=True)
-            bt.logging.info("[shutdown] dispatch executor shut down")
-    except Exception:
-        bt.logging.warning("[shutdown] error shutting down executor", exc_info=True)
-
-    try:
-        th = getattr(v, "_dispatcher_thread", None)
-        if th and th.is_alive():
-            th.join(timeout=5.0)
     except Exception:
         pass
 
