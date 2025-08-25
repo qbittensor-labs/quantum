@@ -11,8 +11,9 @@ import bittensor as bt
 import signal
 import sys
 from pathlib import Path
-from qbittensor.base.validator import BaseValidatorNeuron
 
+import qbittensor as qbt
+from qbittensor.base.validator import BaseValidatorNeuron
 from qbittensor.validator.forward import forward
 from qbittensor.validator.services.metrics import MetricsService
 from qbittensor.validator.utils.auto_updater import start_updater, stop_updater
@@ -60,7 +61,7 @@ class Validator(BaseValidatorNeuron):
         try:
             while True:
                 try:
-                    self.metrics_service.record_heardbeat()
+                    self.metrics_service.record_heardbeat(qbt.__version__)
                     #bt.logging.info(f"step={self.step} uid={self.uid}")
                     self.metagraph.sync(subtensor=self.subtensor)
                     self.forward() # sync now

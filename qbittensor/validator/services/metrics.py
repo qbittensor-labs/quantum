@@ -131,10 +131,13 @@ class MetricsService:
 
             self.miner_weight_gauge.set(value, attributes=attrs)
 
-    def record_heardbeat(self):
+    def record_heardbeat(self, version: str):
         if not self.enabled:
             return
-        self.validator_heartbeat_gauge.set(time.time())
+        attributes = {
+            "version": version
+        }
+        self.validator_heartbeat_gauge.set(time.time(), attributes)
 
     def shutdown(self):
         """
