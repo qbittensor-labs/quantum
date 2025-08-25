@@ -96,70 +96,96 @@ def build_peaked_challenge(
     with tempfile.TemporaryDirectory(prefix="peaked_gen_") as tmpdir:
         outdir = Path(tmpdir)
         worker_path = (Path(__file__).resolve().parents[1] / "services" / "gen_worker.py").resolve()
-        cmd = [
-            sys.executable,
-            str(worker_path),
-            "--difficulty",
-            str(level),
-            "--seed",
-            str(seed),
-            "--gpu-id",
-            str(gpu_id),
-            "--output-dir",
-            str(outdir),
-        ]
 
-        try:
-            proc = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                timeout=timeout_s,
-            )
-        except subprocess.TimeoutExpired:
-            bt.logging.error("[peaked] generation worker timed out; aborting this challenge")
-            raise
+        used_seed = None
+        metadata = None
+        qasm = None
 
-        if proc.returncode != 0:
-            tail = ""
+        for attempt in range(3):
+            attempt_seed = int(seed) if attempt == 0 else random.randrange(1 << 32)
+            cmd = [
+                sys.executable,
+                str(worker_path),
+                "--difficulty",
+                str(level),
+                "--seed",
+                str(attempt_seed),
+                "--gpu-id",
+                str(gpu_id),
+                "--output-dir",
+                str(outdir),
+            ]
+
             try:
-                logs = sorted(outdir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
-                if logs:
-                    data = logs[0].read_text()
-                    tail = data[-2000:]
+                proc = subprocess.run(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=timeout_s,
+                )
+            except subprocess.TimeoutExpired:
+                bt.logging.warning(f"[peaked] attempt {attempt+1}/3 timed out (seed={attempt_seed})")
+                continue
+            except Exception as e:
+                bt.logging.warning(f"[peaked] attempt {attempt+1}/3 failed to launch (seed={attempt_seed}): {e}")
+                continue
+
+            if proc.returncode != 0:
+                tail = ""
+                try:
+                    logs = sorted(outdir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+                    if logs:
+                        data = logs[0].read_text()
+                        tail = data[-2000:]
+                except Exception:
+                    pass
+                bt.logging.warning(
+                    f"[peaked] attempt {attempt+1}/3 failed rc={proc.returncode} (seed={attempt_seed}); stderr=\n{(proc.stderr or '')[:800]}\nlog_tail=\n{tail}"
+                )
+                continue
+
+            if proc.stdout:
+                try:
+                    _ = json.loads(proc.stdout.strip().splitlines()[-1])
+                except Exception:
+                    pass
+
+            meta_fp = None
+            for fp in outdir.glob(f"seed_{attempt_seed}_*_metadata.json"):
+                meta_fp = fp
+                break
+            if not meta_fp:
+                metas = list(outdir.glob("*_metadata.json"))
+                meta_fp = metas[0] if metas else None
+            if not meta_fp:
+                bt.logging.warning(f"[peaked] attempt {attempt+1}/3 produced no metadata (seed={attempt_seed})")
+                continue
+
+            try:
+                metadata = json.loads(Path(meta_fp).read_text())
             except Exception:
-                pass
-            bt.logging.error(
-                f"[peaked] worker failed rc={proc.returncode}; stderr=\n{(proc.stderr or '')[:1000]}\nlog_tail=\n{tail}"
-            )
+                bt.logging.warning(f"[peaked] attempt {attempt+1}/3 could not parse metadata (seed={attempt_seed})")
+                continue
+            qasm_file = outdir / metadata.get("qasm_filename", "")
+            if not qasm_file.exists():
+                bt.logging.warning(f"[peaked] attempt {attempt+1}/3 missing qasm file (seed={attempt_seed})")
+                continue
+            try:
+                qasm = qasm_file.read_text()
+            except Exception:
+                bt.logging.warning(f"[peaked] attempt {attempt+1}/3 failed to read qasm (seed={attempt_seed})")
+                continue
+
+            used_seed = attempt_seed
+            break
+
+        if metadata is None or qasm is None or used_seed is None:
+            bt.logging.error(f"[peaked] all attempts failed for nqubits={nqubits}")
             raise RuntimeError("generation worker failed")
 
-        # Optionally parse a summary line from worker; not required for flow
-        if proc.stdout:
-            try:
-                _ = json.loads(proc.stdout.strip().splitlines()[-1])
-            except Exception:
-                pass
-
-        meta_fp = None
-        for fp in outdir.glob(f"seed_{seed}_*_metadata.json"):
-            meta_fp = fp
-            break
-        if not meta_fp:
-            metas = list(outdir.glob("*_metadata.json"))
-            meta_fp = metas[0] if metas else None
-        if not meta_fp:
-            raise RuntimeError("generation worker did not produce metadata")
-
-        metadata = json.loads(Path(meta_fp).read_text())
-        qasm_file = outdir / metadata.get("qasm_filename", "")
-        if not qasm_file.exists():
-            raise RuntimeError("generation worker did not produce qasm file")
-        qasm = qasm_file.read_text()
-
         unsigned = {
-            "seed": seed,
+            "seed": int(metadata.get("seed", used_seed)),
             "circuit_data": qasm,
             "difficulty_level": float(nqubits),
             "validator_hotkey": wallet.hotkey.ss58_address,

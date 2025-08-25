@@ -12,7 +12,6 @@ from torch import optim
 from qbittensor.validator.peaked_circuit_creation.lib.circuit import (
     SU4, PeakedCircuit)
 
-# --- Main Configuration ---
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 bt.logging.info(f"Using device: {DEVICE} (CUDA available: {torch.cuda.is_available()})")
 
@@ -23,9 +22,6 @@ opti = ctg.ReusableHyperOptimizer(
     max_repeats=36,
     optlib="optuna",
 )
-
-
-# --- Utility and Model Functions (Largely Unchanged) ---
 
 def rand_gpu_unitary(n, dtype=torch.complex64, device=DEVICE):
     """Generates a random n x n unitary matrix on the GPU."""
@@ -79,9 +75,6 @@ class TNModel(torch.nn.Module):
         psi = qtn.unpack(params, self.skeleton)
         return loss_fn(self.const, norm_fn(psi))
 
-
-# --- Refactored Circuit Generation Logic ---
-
 def prepare_model_for_seed(target_state, rqc_depth, pqc_depth, seed):
     """
     Builds the initial tensor networks and TNModel for a given seed.
@@ -100,7 +93,6 @@ def prepare_model_for_seed(target_state, rqc_depth, pqc_depth, seed):
     model = TNModel(opt, const)
     model.to(DEVICE)
     
-    # CORRECTED LINE: Get the skeleton from the 'model' object
     return model, const, init_rqc, model.skeleton
 
 def make_qmps(state: str, depth: int, start_layer: int) -> qtn.TensorNetwork:
@@ -130,13 +122,11 @@ def find_lucky_seed_and_make_circuit(
     """
     nqubits = len(target_state)
     
-    # --- Part 1: Search for the "Luckiest" Seed ---
     NUM_SEEDS_TO_TRY = 20
     seed_losses = {}
 
     bt.logging.info(f"Pre-screening {NUM_SEEDS_TO_TRY} seeds by initial loss...")
 
-    # Use torch.no_grad() as we are not training, only evaluating.
     with torch.no_grad():
         for i in range(NUM_SEEDS_TO_TRY):
             candidate_seed = base_seed + i
@@ -144,23 +134,31 @@ def find_lucky_seed_and_make_circuit(
                 target_state, rqc_depth, pqc_depth, candidate_seed
             )
             
-            # THIS IS THE NEW, FAST TEST: Just one forward pass
             initial_loss = model()
             
             seed_losses[candidate_seed] = initial_loss.item()
 
-    # Find the seed that resulted in the best (most negative) loss
     best_seed = min(seed_losses, key=seed_losses.get)
-    bt.logging.info(f"✅ Selected champion seed: {best_seed} (Loss: {seed_losses[best_seed]:.4e})")
+    bt.logging.info(f" Selected champion seed: {best_seed} (Loss: {seed_losses[best_seed]:.4e})")
 
-    # --- Part 2: Run Full Optimization with the Best Seed ---
+    # 1 forward-pass sanity check on the champion seed to catch bad
+    # contraction cases (e.g., torch >25 dims) before full optim
+    with torch.no_grad():
+        try:
+            _m_check, _, _, _ = prepare_model_for_seed(
+                target_state, rqc_depth, pqc_depth, best_seed
+            )
+            _ = _m_check()
+        except RuntimeError as e:
+            bt.logging.warning(f"Champion seed {best_seed} failed prescreen forward: {e}")
+            raise
+
     
     # Re-create the model from scratch with the best seed to start fresh
     model, const, init_rqc, skeleton = prepare_model_for_seed(
         target_state, rqc_depth, pqc_depth, best_seed
     )
 
-    # Set up the main optimizer
     #lr = max(0.001, 10 ** (nqubits / 4 - 11))
     lr = 5e-2
     optimizer = optim.AdamW(model.parameters(), lr=lr)
@@ -185,7 +183,6 @@ def find_lucky_seed_and_make_circuit(
     opt_loop_time = time.perf_counter() - start_opt_loop
     bt.logging.info(f"Optimization loop finished in {opt_loop_time:.4f} seconds.")
 
-    # --- Part 3: Post-process and Return Results ---
     with torch.no_grad():
         final_params = {int(i): p.data for i, p in model.torch_params.items()}
         opt_final = qtn.unpack(final_params, skeleton)
@@ -239,7 +236,6 @@ class CircuitParams:
         make_circuit_time = time.perf_counter() - start_time
         bt.logging.info(f"Total time for make_circuit: {make_circuit_time:.4f} seconds")
 
-        # ... (rest of the function for converting to SU4 is unchanged) ...
         start_conversion = time.perf_counter()
         unis = list()
         q0 = 0
