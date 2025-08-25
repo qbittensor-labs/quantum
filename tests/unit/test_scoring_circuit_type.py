@@ -115,13 +115,13 @@ def test_scoring_uses_challenge_circuit_type(tmp_path):
     mgr.weight_peaked = 1.0
     mgr.weight_hstab = 0.0
     scores = mgr.calculate_decayed_scores(lookback_days=2)
-    assert scores.get(1, 0.0) == 1.0  # miner 1 has peaked credit via challenge type
-    assert scores.get(2, 0.0) == 0.0  # miner 2 shouldn't get peaked credit (challenge is hstab)
+    assert scores.get("hk1", 0.0) == 1.0  # miner hk1 has peaked credit via challenge type
+    assert scores.get("hk2", 0.0) == 0.0  # miner hk2 shouldn't get peaked credit (challenge is hstab)
 
     # only hstab counts
     mgr.weight_peaked = 0.0
     mgr.weight_hstab = 1.0
     scores2 = mgr.calculate_decayed_scores(lookback_days=2)
-    assert scores2.get(1, 0.0) == 0.0  # miner 1 shouldn't get hstab credit (challenge is peaked)
-    assert scores2.get(2, 0.0) == 1.0  # miner 2 has hstab credit via challenge type
+    assert scores2.get("hk1", 0.0) == 0.0  # miner hk1 shouldn't get hstab credit (challenge is peaked)
+    assert scores2.get("hk2", 0.0) == 1.0  # miner hk2 has hstab credit via challenge type
 
