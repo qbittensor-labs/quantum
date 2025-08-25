@@ -67,11 +67,16 @@ class SolutionProcessor:
 
         challenge_circuit_type = _col("circuit_type", "peaked")
         if getattr(sol, "circuit_type", None) and sol.circuit_type != challenge_circuit_type:
-            bt.logging.warning(
-                f"[solution-proc] miner-reported circuit_type '{sol.circuit_type}' "
-                f"does not match challenge circuit_type '{challenge_circuit_type}' for {sol.challenge_id[:10]}. "
-                f"Using challenge circuit_type."
+            bt.logging.trace(
+                f"[solution-proc] miner-reported circuit_type diff from challenges table"
             )
+
+        # Clamp recorded nqubits for hstab from >50 to 50
+        raw_nqubits = _col("nqubits", sol.nqubits or 0)
+        if (challenge_circuit_type or "").lower().startswith("hstab"):
+            capped_nqubits = min(50, int(raw_nqubits or 0))
+        else:
+            capped_nqubits = int(raw_nqubits or 0)
 
         # issue certificate only after _col exists
         if is_correct:
@@ -82,7 +87,7 @@ class SolutionProcessor:
                     miner_hotkey=miner_hotkey,
                     circuit_type=challenge_circuit_type,
                     entanglement_entropy=0.0,
-                    nqubits=_col("nqubits", sol.nqubits or 0),
+                    nqubits=capped_nqubits,
                     rqc_depth=_col("rqc_depth", sol.rqc_depth or 0),
                 )
             except Exception as e:
@@ -100,7 +105,7 @@ class SolutionProcessor:
                 miner_solution=sol.solution_bitstring,
                 difficulty_level=_col("difficulty_level", sol.difficulty_level or 0.0),
                 entanglement_entropy=0.0,
-                nqubits=_col("nqubits", sol.nqubits or 0),
+                nqubits=capped_nqubits,
                 rqc_depth=_col("rqc_depth", sol.rqc_depth or 0),
                 time_received=time_sent,
             )
