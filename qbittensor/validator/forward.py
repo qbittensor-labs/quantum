@@ -4,9 +4,13 @@ Forward method for a Validator in Subnet 63 - Quantum
 from __future__ import annotations
 
 import concurrent.futures as futures
-import queue, threading, time, os, asyncio
+import asyncio
+import os
+import queue
+import threading
+import time
 from pathlib import Path
-from typing import Any, List
+from typing import Protocol
 
 import bittensor as bt
 from qbittensor.validator.config.difficulty_config import DifficultyConfig
@@ -17,7 +21,6 @@ from qbittensor.validator.services.weight_manager import WeightManager
 from qbittensor.validator.utils.whitelist import load_whitelist
 from qbittensor.validator.database.fixups import apply_fixups 
 
-# AUTO‑SCALE: detect hardware once at import time
 try:
     import torch
     _GPU_COUNT = torch.cuda.device_count()
@@ -45,7 +48,13 @@ def _ensure_event_loop() -> None:
         asyncio.set_event_loop(loop)
 
 # bootstrap & runtime
-def _bootstrap(v: "Validator") -> None:
+class _ValidatorLike(Protocol):
+    metagraph: any
+    wallet: any
+    is_running: bool
+
+
+def _bootstrap(v: _ValidatorLike) -> None:
     if getattr(v, "_bootstrapped", False):
         return
     v._bootstrapped = True
@@ -60,6 +69,8 @@ def _bootstrap(v: "Validator") -> None:
         bt.logging.info(f"[bootstrap] seeded {runtime.name} from template")
 
     v._in_flight   = set()
+    if not hasattr(v, "_shutdown_event"):
+        v._shutdown_event = threading.Event()
     v._hotkey_cache: dict[int, str] = {}
 
     raw = v.metagraph.uids.tolist()
@@ -75,7 +86,8 @@ def _bootstrap(v: "Validator") -> None:
 
     v._whitelist = load_whitelist(CFG_DIR / "whitelist_validators.json")
 
-    db_dir = Path(__file__).parent / "database"; db_dir.mkdir(exist_ok=True)
+    db_dir = Path(__file__).parent / "database"
+    db_dir.mkdir(exist_ok=True)
     db_path = db_dir / "validator_data.db"
 
     apply_fixups(db_path)
@@ -121,8 +133,13 @@ def _bootstrap(v: "Validator") -> None:
         v._dispatcher_thread = threading.Thread(target=_dispatcher_loop, args=(v,), name="Dispatcher", daemon=True)
         v._dispatcher_thread.start()
 
-def _dispatcher_loop(v: "Validator") -> None:
-    while True:
+    bt.logging.info(
+        f"Validator bootstrap complete - single-threaded generation, dispatch_workers={_DISPATCH_WORKERS}"
+    )
+
+
+def _dispatcher_loop(v: _ValidatorLike) -> None:
+    while not getattr(v, "_shutdown_event", threading.Event()).is_set():
         try:
             item = v._queue.get_nowait()
         except queue.Empty:
@@ -138,13 +155,20 @@ def _dispatcher_loop(v: "Validator") -> None:
                 v._queue.put(item)
                 time.sleep(_DISPATCH_SLEEP)
                 continue
-        _handle_item(v, item)
+        if getattr(v, "_shutdown_event", threading.Event()).is_set():
+            break
+        v._executor.submit(_handle_item, v, item)
+        time.sleep(_DISPATCH_SLEEP)
+    bt.logging.info("[dispatcher] shutdown signal received; exiting dispatcher loop")
+
 
 _dendrite_lock = threading.Lock()
 
-def _handle_item(v: "Validator", item) -> None:
+def _handle_item(v: _ValidatorLike, item) -> None:
     _ensure_event_loop()
     uid, *_ = item
+    if getattr(v, "_shutdown_event", threading.Event()).is_set():
+        return
     with _inflight_lock:
         if uid in v._in_flight:
             return
@@ -152,14 +176,15 @@ def _handle_item(v: "Validator", item) -> None:
     try:
         miner_hotkey = v.metagraph.hotkeys[uid]
         with _dendrite_lock:
-            v._resp_proc.process(item, miner_hotkey=miner_hotkey)
+            if not getattr(v, "_shutdown_event", threading.Event()).is_set():
+                v._resp_proc.process(item, miner_hotkey=miner_hotkey)
     finally:
         with _inflight_lock:
             v._in_flight.discard(uid)
         v._cursor.save(uid)
 
 
-def _refresh_uid_deps(v: "Validator") -> None:
+def _refresh_uid_deps(v: _ValidatorLike) -> None:
     bt.logging.info("refreshing metagraph…")
     v.metagraph.sync()
 
@@ -183,7 +208,7 @@ def _refresh_uid_deps(v: "Validator") -> None:
         bt.logging.info(f"metagraph changed: {len(final_uids)} live miners")
 
 
-def forward(self: "Validator") -> None:
+def forward(self: _ValidatorLike) -> None:
     """Entry point"""
     if not getattr(self, "_bootstrapped", False):
         _bootstrap(self)
@@ -197,4 +222,78 @@ def forward(self: "Validator") -> None:
     self._weight_mgr.update()
 
 
-__all__ = ["forward"]
+def shutdown(v: _ValidatorLike, timeout_s: float | None = None) -> None:
+    if timeout_s is None:
+        try:
+            timeout_s = float(os.getenv("VALIDATOR_SHUTDOWN_TIMEOUT_S", "300"))
+        except Exception:
+            timeout_s = 300.0
+    try:
+        bt.logging.info("[shutdown] initiating validator shutdown…")
+    except Exception:
+        pass
+
+    try:
+        if hasattr(v, "_shutdown_event"):
+            v._shutdown_event.set()
+    except Exception:
+        pass
+
+    try:
+        if hasattr(v, "_producer") and v._producer:
+            v._producer.stop()
+            bt.logging.info("[shutdown] challenge producer stopped")
+    except Exception:
+        bt.logging.warning("[shutdown] error stopping producer", exc_info=True)
+
+    t0 = time.time()
+    try:
+        while True:
+            with _inflight_lock:
+                remaining = len(getattr(v, "_in_flight", set()))
+            if remaining == 0:
+                break
+            elapsed = time.time() - t0
+            if elapsed > timeout_s:
+                bt.logging.error(f"[shutdown] hard timeout after {elapsed:.1f}s with {remaining} in‑flight; forcing exit")
+                import os as _os
+                _os._exit(1)
+            time.sleep(0.25)
+    except Exception:
+        pass
+
+    try:
+        if hasattr(v, "_executor") and v._executor:
+            v._executor.shutdown(wait=True)
+            bt.logging.info("[shutdown] dispatch executor shut down")
+    except Exception:
+        bt.logging.warning("[shutdown] error shutting down executor", exc_info=True)
+
+    try:
+        th = getattr(v, "_dispatcher_thread", None)
+        if th and th.is_alive():
+            th.join(timeout=5.0)
+    except Exception:
+        pass
+
+    try:
+        import torch  # type: ignore
+        if torch.cuda.is_available():
+            try:
+                torch.cuda.synchronize()
+            except Exception:
+                pass
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    try:
+        bt.logging.info("[shutdown] validator shutdown complete")
+    except Exception:
+        pass
+
+
+__all__ = ["forward", "shutdown"]
