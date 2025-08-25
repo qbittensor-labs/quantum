@@ -16,7 +16,7 @@ from qbittensor.validator.utils.challenge_utils import (
     _convert_peaked_difficulty_to_qubits,
 )
 
-RPC_DEADLINE = 10 # seconds
+RPC_DEADLINE = 5  # seconds
 _CUTOFF_TS = dt.datetime(2025, 8, 6, 12, 0, 0, tzinfo=timezone.utc) # legacy certs
 
 

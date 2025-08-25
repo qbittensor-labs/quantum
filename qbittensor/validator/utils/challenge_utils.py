@@ -8,6 +8,11 @@ import random
 import time
 import hashlib
 from typing import Iterable, Tuple
+import subprocess
+import tempfile
+import json
+import os
+from pathlib import Path
 import gc
 import sys
 import numpy as np
@@ -18,9 +23,6 @@ import stim
 from qbittensor.protocol import (
     ChallengePeakedCircuit,
     ChallengeHStabCircuit,
-)
-from qbittensor.validator.peaked_circuit_creation.lib.circuit_gen import (
-    CircuitParams,
 )
 from qbittensor.validator.hidden_stabilizers_creation.lib import make_gen
 from qbittensor.validator.peaked_circuit_creation.quimb_cache_utils import (
@@ -87,60 +89,124 @@ def build_peaked_challenge(
 
     rqc_mul = 150 * np.exp(-nqubits / 4) + 0.5
     rqc_depth = int(round(rqc_mul * nqubits))
-    pqc_depth = max(1, nqubits // 5)
-    params = CircuitParams(level, nqubits, rqc_depth, pqc_depth)
-    entropy = 0.0
 
-    attempts = 0
-    last_exc = None
-    while attempts < 3:
-        try:
-            circuit = params.compute_circuit(seed)
-            break
-        except Exception as e:
-            msg = str(e).lower()
-            is_oom = (
-                isinstance(e, MemoryError)
-                or 'out of memory' in msg
-                or 'cuda error: out of memory' in msg
-            )
-            if not is_oom:
-                last_exc = e
-                raise
-            attempts += 1
-            last_exc = e
+    gpu_id = int(os.getenv("VALIDATOR_GPU_ID", "0"))
+    timeout_s = float(os.getenv("VALIDATOR_GEN_TIMEOUT_S", "1000"))
+
+    with tempfile.TemporaryDirectory(prefix="peaked_gen_") as tmpdir:
+        outdir = Path(tmpdir)
+        worker_path = (Path(__file__).resolve().parents[1] / "services" / "gen_worker.py").resolve()
+
+        used_seed = None
+        metadata = None
+        qasm = None
+
+        for attempt in range(3):
+            attempt_seed = int(seed) if attempt == 0 else random.randrange(1 << 32)
+            cmd = [
+                sys.executable,
+                str(worker_path),
+                "--difficulty",
+                str(level),
+                "--seed",
+                str(attempt_seed),
+                "--gpu-id",
+                str(gpu_id),
+                "--output-dir",
+                str(outdir),
+            ]
+
             try:
-                bt.logging.warning(f"[peaked] OOM during circuit gen (attempt {attempts}), clearing caches and retrying...")
+                proc = subprocess.run(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    timeout=timeout_s,
+                )
+            except subprocess.TimeoutExpired:
+                bt.logging.warning(f"[peaked] attempt {attempt+1}/3 timed out (seed={attempt_seed})")
+                continue
+            except Exception as e:
+                bt.logging.warning(f"[peaked] attempt {attempt+1}/3 failed to launch (seed={attempt_seed}): {e}")
+                continue
+
+            if proc.returncode != 0:
+                tail = ""
+                try:
+                    logs = sorted(outdir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+                    if logs:
+                        data = logs[0].read_text()
+                        tail = data[-2000:]
+                except Exception:
+                    pass
+                bt.logging.warning(
+                    f"[peaked] attempt {attempt+1}/3 failed rc={proc.returncode} (seed={attempt_seed}); stderr=\n{(proc.stderr or '')[:800]}\nlog_tail=\n{tail}"
+                )
+                continue
+
+            if proc.stdout:
+                try:
+                    _ = json.loads(proc.stdout.strip().splitlines()[-1])
+                except Exception:
+                    pass
+
+            meta_fp = None
+            for fp in outdir.glob(f"seed_{attempt_seed}_*_metadata.json"):
+                meta_fp = fp
+                break
+            if not meta_fp:
+                metas = list(outdir.glob("*_metadata.json"))
+                meta_fp = metas[0] if metas else None
+            if not meta_fp:
+                bt.logging.warning(f"[peaked] attempt {attempt+1}/3 produced no metadata (seed={attempt_seed})")
+                continue
+
+            try:
+                metadata = json.loads(Path(meta_fp).read_text())
             except Exception:
-                pass
-            _clear_memory()
-            time.sleep(0.1)
-    else:
-        raise last_exc if last_exc else RuntimeError("Peaked circuit generation failed after retries")
-    _clear_memory()
+                bt.logging.warning(f"[peaked] attempt {attempt+1}/3 could not parse metadata (seed={attempt_seed})")
+                continue
+            qasm_file = outdir / metadata.get("qasm_filename", "")
+            if not qasm_file.exists():
+                bt.logging.warning(f"[peaked] attempt {attempt+1}/3 missing qasm file (seed={attempt_seed})")
+                continue
+            try:
+                qasm = qasm_file.read_text()
+            except Exception:
+                bt.logging.warning(f"[peaked] attempt {attempt+1}/3 failed to read qasm (seed={attempt_seed})")
+                continue
 
-    unsigned = {
-        "seed": seed,
-        "circuit_data": circuit.to_qasm(),
-        "difficulty_level": float(nqubits),
-        "validator_hotkey": wallet.hotkey.ss58_address,
-        "nqubits": nqubits,
-        "rqc_depth": rqc_depth,
-    }
-    unsigned["challenge_id"] = canonical_hash(unsigned)
+            used_seed = attempt_seed
+            break
 
-    syn = ChallengePeakedCircuit(**unsigned, validator_signature=None)
-    meta = ChallengeMeta(
-        challenge_id=unsigned["challenge_id"],
-        circuit_kind="peaked",
-        difficulty=float(nqubits),
-        validator_hotkey=wallet.hotkey.ss58_address,
-        entanglement_entropy=entropy,
-        nqubits=nqubits,
-        rqc_depth=rqc_depth,
-    )
+        if metadata is None or qasm is None or used_seed is None:
+            bt.logging.error(f"[peaked] all attempts failed for nqubits={nqubits}")
+            raise RuntimeError("generation worker failed")
 
-    return syn, meta, circuit.target_state
+        unsigned = {
+            "seed": int(metadata.get("seed", used_seed)),
+            "circuit_data": qasm,
+            "difficulty_level": float(nqubits),
+            "validator_hotkey": wallet.hotkey.ss58_address,
+            "nqubits": nqubits,
+            "rqc_depth": rqc_depth,
+        }
+        unsigned["challenge_id"] = canonical_hash(unsigned)
+
+        syn = ChallengePeakedCircuit(**unsigned, validator_signature=None)
+        meta = ChallengeMeta(
+            challenge_id=unsigned["challenge_id"],
+            circuit_kind="peaked",
+            difficulty=float(nqubits),
+            validator_hotkey=wallet.hotkey.ss58_address,
+            entanglement_entropy=0.0,
+            nqubits=nqubits,
+            rqc_depth=rqc_depth,
+        )
+
+        target_state = metadata.get("target_state", "")
+        return syn, meta, target_state
 
 
 # Hidden Stabiliser circuits
@@ -205,6 +271,5 @@ def _convert_qubits_to_peaked_difficulty(nqubits: int) -> float:
     Inverse mapping for legacy difficulty → nqubits relation used by CircuitParams.
     nqubits ≈ 12 + 10 * log2(level + 3.9) ⇒ level ≈ 2 ** ((nqubits - 12) / 10) - 3.9
     """
-    from math import log2
     n = max(2, int(nqubits))
     return max(0.0, (2 ** ((n - 12) / 10.0)) - 3.9)
