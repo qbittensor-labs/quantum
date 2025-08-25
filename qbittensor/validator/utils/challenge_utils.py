@@ -66,7 +66,7 @@ def _convert_peaked_difficulty_to_qubits(level: float) -> int:
         nqubits = int(12 + 10 * np.log2(lvl + 3.9))
     else:
         nqubits = int(round(lvl))
-    return max(16, min(nqubits, 40))
+    return max(16, min(nqubits, 39))
 
 # Peaked circuits
 
@@ -126,9 +126,11 @@ def build_peaked_challenge(
                 )
             except subprocess.TimeoutExpired:
                 bt.logging.warning(f"[peaked] attempt {attempt+1}/3 timed out (seed={attempt_seed})")
+                time.sleep(2.0)
                 continue
             except Exception as e:
                 bt.logging.warning(f"[peaked] attempt {attempt+1}/3 failed to launch (seed={attempt_seed}): {e}")
+                time.sleep(1.0)
                 continue
 
             if proc.returncode != 0:
@@ -143,6 +145,7 @@ def build_peaked_challenge(
                 bt.logging.warning(
                     f"[peaked] attempt {attempt+1}/3 failed rc={proc.returncode} (seed={attempt_seed}); stderr=\n{(proc.stderr or '')[:800]}\nlog_tail=\n{tail}"
                 )
+                time.sleep(1.0)
                 continue
 
             if proc.stdout:
@@ -160,21 +163,25 @@ def build_peaked_challenge(
                 meta_fp = metas[0] if metas else None
             if not meta_fp:
                 bt.logging.warning(f"[peaked] attempt {attempt+1}/3 produced no metadata (seed={attempt_seed})")
+                time.sleep(1.0)
                 continue
 
             try:
                 metadata = json.loads(Path(meta_fp).read_text())
             except Exception:
                 bt.logging.warning(f"[peaked] attempt {attempt+1}/3 could not parse metadata (seed={attempt_seed})")
+                time.sleep(0.5)
                 continue
             qasm_file = outdir / metadata.get("qasm_filename", "")
             if not qasm_file.exists():
                 bt.logging.warning(f"[peaked] attempt {attempt+1}/3 missing qasm file (seed={attempt_seed})")
+                time.sleep(0.5)
                 continue
             try:
                 qasm = qasm_file.read_text()
             except Exception:
                 bt.logging.warning(f"[peaked] attempt {attempt+1}/3 failed to read qasm (seed={attempt_seed})")
+                time.sleep(0.5)
                 continue
 
             used_seed = attempt_seed
@@ -259,8 +266,8 @@ def _params_from_difficulty(level: float) -> Tuple[int, int]:
     Returns (nqubits, rqc_depth).
     """
     nqubits = int(round(level))
-    # Cap at 40 qubits
-    nqubits = max(16, min(nqubits, 40))
+    # Cap at 39 qubits
+    nqubits = max(16, min(nqubits, 39))
     rqc_mul = 150 * np.exp(-nqubits / 4) + 0.5
     rqc_depth = int(round(rqc_mul * nqubits))
     return nqubits, rqc_depth

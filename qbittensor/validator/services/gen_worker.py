@@ -9,6 +9,7 @@ import sys
 import argparse
 import logging
 from datetime import datetime
+import bittensor as bt
 
 log_file_handler = None
 
@@ -20,13 +21,7 @@ def setup_logging(args):
 
     sys.stdout = log_file_handler
     sys.stderr = log_file_handler
-    
-    print(f"--- Worker Log for PID {os.getpid()} ---")
-    print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Arguments: {vars(args)}")
-    print("-" * 30)
 
-    print("Configuring bittensor logger...")
     bt_logger = logging.getLogger()
     bt_logger.setLevel(logging.INFO)
 
@@ -34,12 +29,29 @@ def setup_logging(args):
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     file_stream_handler.setFormatter(formatter)
     bt_logger.addHandler(file_stream_handler)
-    print("Bittensor logger configured to write to this file.")
+    bt.logging.info(f"--- Worker Log for PID {os.getpid()} ---")
+    bt.logging.info(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    bt.logging.info(f"Arguments: {vars(args)}")
+
+def _cleanup_cuda() -> None:
+    try:
+        if not torch.cuda.is_available():
+            return
+        for name in ("synchronize", "empty_cache", "ipc_collect"):
+            fn = getattr(torch.cuda, name, None)
+            if callable(fn):
+                try:
+                    fn()
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
 
 def main(args):
     """The main execution function for the worker."""
     setup_logging(args)
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     try:
         from pathlib import Path
         repo_root = Path(__file__).resolve().parents[3]
@@ -84,60 +96,61 @@ def main(args):
         if torch.cuda.is_available():
             torch.cuda.set_device(args.gpu_id)
     except Exception as e:
-        print(f"WARN: could not set CUDA device {args.gpu_id}: {e}")
+        bt.logging.warning(f"could not set CUDA device {args.gpu_id}: {e}")
     if PSUTIL_AVAILABLE and args.cpu_cores:
         p = psutil.Process()
         p.cpu_affinity(args.cpu_cores)
 
-    with Timer() as t_total:
-        params = CircuitParams.from_difficulty(args.difficulty)
-        circuit = params.compute_circuit(args.seed)
-        qasm = circuit.to_qasm()
+    try:
+        with Timer() as t_total:
+            params = CircuitParams.from_difficulty(args.difficulty)
+            circuit = params.compute_circuit(args.seed)
+            qasm = circuit.to_qasm()
 
-    result = {
-        "qubits": getattr(params, "nqubits", None),
-        "rqc_depth": getattr(params, "rqc_depth", None),
-        "pqc_depth": getattr(params, "pqc_depth", None),
-        "total_ms": t_total.elapsed_ms,
-        "qasm": qasm,
-        "bitstring": safe_str(getattr(circuit, "target_state", None)),
-        "peak_prob": getattr(circuit, "peak_prob", 0.0),
-    }
+        result = {
+            "qubits": getattr(params, "nqubits", None),
+            "rqc_depth": getattr(params, "rqc_depth", None),
+            "pqc_depth": getattr(params, "pqc_depth", None),
+            "total_ms": t_total.elapsed_ms,
+            "qasm": qasm,
+            "bitstring": safe_str(getattr(circuit, "target_state", None)),
+            "peak_prob": getattr(circuit, "peak_prob", 0.0),
+        }
 
-    print("Saving artifacts...")
-    os.makedirs(args.output_dir, exist_ok=True)
-    base_filename = f"seed_{args.seed}_rqc{result['rqc_depth']}_pqc{result['pqc_depth']}_diff{args.difficulty:.2f}"
-    qasm_filename = f"{base_filename}.qasm"
-    json_filename = f"{base_filename}_metadata.json"
-    
-    with open(os.path.join(args.output_dir, qasm_filename), 'w') as f:
-        f.write(result['qasm'])
+        bt.logging.info("Saving artifacts…")
+        os.makedirs(args.output_dir, exist_ok=True)
+        base_filename = f"seed_{args.seed}_rqc{result['rqc_depth']}_pqc{result['pqc_depth']}_diff{args.difficulty:.2f}"
+        qasm_filename = f"{base_filename}.qasm"
+        json_filename = f"{base_filename}_metadata.json"
+        
+        with open(os.path.join(args.output_dir, qasm_filename), 'w') as f:
+            f.write(result['qasm'])
 
-    print(f"Saving metadata to {json_filename}...")
-    peak_prob = result['peak_prob']
-    metadata = {
-        "seed": args.seed,
-        "difficulty": args.difficulty,
-        "target_state": result['bitstring'],
-        "peak_probability": peak_prob,
-        "num_qubits": result['qubits'],
-        "rqc_depth": result['rqc_depth'],
-        "pqc_depth": result['pqc_depth'],
-        "qasm_filename": qasm_filename,
-        "num_shots": int(round(1 / peak_prob)) if peak_prob > 1e-12 else 0,
-        "generation_timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    }
-    with open(os.path.join(args.output_dir, json_filename), 'w') as f:
-        json.dump(metadata, f, indent=4, cls=NumpyEncoder)
-    # ---------------------------------------------------
-    
-    summary_data = {
-        "seed": args.seed, "difficulty": args.difficulty, "qubits": result["qubits"],
-        "rqc_depth": result["rqc_depth"], "pqc_depth": result["pqc_depth"],
-        "total_ms": result["total_ms"],
-    }
-    sys.stdout = sys.__stdout__
-    print(json.dumps(summary_data))
+        bt.logging.info(f"Saving metadata to {json_filename}…")
+        peak_prob = result['peak_prob']
+        metadata = {
+            "seed": args.seed,
+            "difficulty": args.difficulty,
+            "target_state": result['bitstring'],
+            "peak_probability": peak_prob,
+            "num_qubits": result['qubits'],
+            "rqc_depth": result['rqc_depth'],
+            "pqc_depth": result['pqc_depth'],
+            "qasm_filename": qasm_filename,
+            "num_shots": int(round(1 / peak_prob)) if peak_prob > 1e-12 else 0,
+            "generation_timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        with open(os.path.join(args.output_dir, json_filename), 'w') as f:
+            json.dump(metadata, f, indent=4, cls=NumpyEncoder)
+        
+        summary_data = {
+            "seed": args.seed, "difficulty": args.difficulty, "qubits": result["qubits"],
+            "rqc_depth": result["rqc_depth"], "pqc_depth": result["pqc_depth"],
+            "total_ms": result["total_ms"],
+        }
+        bt.logging.info(json.dumps(summary_data))
+    finally:
+        _cleanup_cuda()
 
 
 if __name__ == "__main__":
@@ -153,9 +166,7 @@ if __name__ == "__main__":
         main(args)
     except Exception as e:
         if log_file_handler:
-            print("\n" + "="*50, file=log_file_handler)
-            print("FATAL UNHANDLED EXCEPTION", file=log_file_handler)
-            print("="*50, file=log_file_handler)
-            traceback.print_exc(file=log_file_handler)
+            bt.logging.critical("FATAL UNHANDLED EXCEPTION")
+            bt.logging.exception("Unhandled exception in worker")
             log_file_handler.close()
         sys.exit(1)
