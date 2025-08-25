@@ -13,21 +13,29 @@ import sys
 from pathlib import Path
 from qbittensor.base.validator import BaseValidatorNeuron
 
-from qbittensor.validator.forward import forward
+from qbittensor.validator.forward import forward, shutdown
 from qbittensor.validator.utils.auto_updater import start_updater, stop_updater
 
 CLEANUP_FLAG = Path("/tmp/validator_cleanup_done")
 
 def _graceful_shutdown(signum, frame):
     bt.logging.info(f"[validator] Received signal {signum}, shutting down gracefully...")
-    #stop_updater()
     try:
         CLEANUP_FLAG.write_text("done")
-        bt.logging.info("[validator] Cleanup flag written")
     except Exception as e:
         bt.logging.warning(f"[validator] Could not write cleanup flag: {e}")
-    
-    sys.exit(0)
+    try:
+        global _VALIDATOR_SINGLETON
+        if _VALIDATOR_SINGLETON is not None:
+            import os
+            timeout_env = os.getenv("VALIDATOR_SHUTDOWN_TIMEOUT_S")
+            timeout_s = float(timeout_env) if timeout_env else None
+            shutdown(_VALIDATOR_SINGLETON, timeout_s=timeout_s)
+    except Exception:
+        bt.logging.error("[validator] error during graceful shutdown", exc_info=True)
+    finally:
+        # Exit non‑zero so PM2 autorestart brings the process back up automatically
+        sys.exit(1)
 
 
 class Validator(BaseValidatorNeuron):
@@ -54,6 +62,8 @@ class Validator(BaseValidatorNeuron):
         # Validator git repo update worker
         #start_updater(check_interval_minutes=5)
 
+        global _VALIDATOR_SINGLETON
+        _VALIDATOR_SINGLETON = self
         try:
             while True:
                 try:
@@ -71,7 +81,13 @@ class Validator(BaseValidatorNeuron):
             #stop_updater()
             if self.is_running:
                 self.stop_run_thread()
+            try:
+                shutdown(self, timeout_s=1800.0)
+            except Exception:
+                pass
 
+
+_VALIDATOR_SINGLETON = None
 
 if __name__ == "__main__":
     signal.signal(signal.SIGTERM, _graceful_shutdown)

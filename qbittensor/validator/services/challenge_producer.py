@@ -5,10 +5,9 @@ ChallengeProducer - queues hstab and peaked challenges for miners.
 from __future__ import annotations
 
 import queue
-import random
 import threading
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Tuple
 
@@ -105,6 +104,7 @@ class ChallengeProducer:
         if self._thread:
             self._thread.join(timeout=2)
         self.cleanup_stash()
+        bt.logging.info("[challenge-producer] thread stopped")
 
     # Public
     def update_uid_list(self, new_uids: List[int]) -> None:
@@ -200,6 +200,7 @@ class ChallengeProducer:
                 bt.logging.error("[challenge-producer] error", exc_info=True)
 
             time.sleep(self._SLEEP_S)
+        bt.logging.info("[challenge-producer] stop_event set; exiting loop")
 
     # Challenge creation
     def _build_challenge_for_uid(self, uid: int) -> Tuple[Any, ChallengeMeta, str]:
