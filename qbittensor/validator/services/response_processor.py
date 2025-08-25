@@ -16,7 +16,7 @@ from qbittensor.validator.utils.challenge_utils import (
     _convert_peaked_difficulty_to_qubits,
 )
 
-RPC_DEADLINE = 10  # seconds
+RPC_DEADLINE = 10 # seconds
 _CUTOFF_TS = dt.datetime(2025, 8, 6, 12, 0, 0, tzinfo=timezone.utc) # legacy certs
 
 
@@ -33,7 +33,7 @@ class ResponseProcessor:
     # public entry
     def process(self, item, miner_hotkey: str) -> None:
         uid, syn, meta, target_state, _ = item
-        bt.logging.info(f"[send] ▶️  UID {uid}   cid={meta.challenge_id[:10]}")
+        bt.logging.info(f"[send] ▶️ UID {uid} cid={meta.challenge_id[:10]}")
         _service_one_uid(self.v, uid, syn, meta, target_state, miner_hotkey)
 
 
@@ -66,6 +66,9 @@ def _service_one_uid(
     except Exception:
         bt.logging.error("[single] log_challenge failed", exc_info=True)
 
+    # Record the circuit sent metric before sending
+    v.metrics_service.record_circuit_sent(meta.circuit_kind, uid, miner_hotkey)
+
     # make sure the axon exists
     try:
         axon = v.metagraph.axons[uid]
@@ -73,7 +76,7 @@ def _service_one_uid(
         bt.logging.warning(f"[single] UID {uid} has no axon")
         return
 
-    syn.solution_bitstring = None  # hide the answer
+    syn.solution_bitstring = None # hide the answer
     syn.attach_certificates(v.certificate_issuer.pop_for(miner_hotkey))
 
     # blocking RPC
@@ -115,7 +118,7 @@ def _service_one_uid(
                 cert_ts = cert_ts.replace(tzinfo=timezone.utc)
             cert_ts = cert_ts.astimezone(timezone.utc)
         except Exception:
-            cert_ts = dt.datetime.max.replace(tzinfo=timezone.utc)  # force-fail
+            cert_ts = dt.datetime.max.replace(tzinfo=timezone.utc) # force-fail
 
         legacy_ok = (cert_hkey in (None, "")) and cert_uid == uid and cert_ts < _CUTOFF_TS
 
@@ -166,6 +169,8 @@ def _service_one_uid(
         ):
             stored += 1
 
+            # Record the solution received metric
+            v.metrics_service.record_solution_received(kind, uid, miner_hotkey)
     if stored:
         bt.logging.info(f"[solution] ✅ Processed solutions from UID {uid}")
 
@@ -178,7 +183,7 @@ def _service_one_uid(
     if desired is None:
         return
 
-    cfg = _select_diff_cfg(v, kind)  # will raise if kind unknown
+    cfg = _select_diff_cfg(v, kind) # will raise if kind unknown
     current = float(cfg.get(uid))
 
     if kind == "hstab":
@@ -188,7 +193,7 @@ def _service_one_uid(
     elif kind == "peaked":
         MIN_Q = 16.0
         MAX_Q = 40.0
-        STEP  = 7.0
+        STEP = 7.0
 
         if 0.0 <= current <= 10.0:
             current = float(_convert_peaked_difficulty_to_qubits(current))
@@ -207,7 +212,7 @@ def _service_one_uid(
         new_q = max(MIN_Q, min(desired_val, cap))
         new_diff = new_q
 
-    else:  # defensive: should never happen
+    else: # defensive: should never happen
         raise ValueError(f"Unhandled circuit kind {kind!r}")
     bt.logging.debug(
         f"[difficulty] {kind} → file {cfg._path.name} "
@@ -215,6 +220,8 @@ def _service_one_uid(
     )
     cfg.set(uid, new_diff)
 
+    # Record the difficulty set metric
+    v.metrics_service.set_circuit_difficulty(kind, uid, miner_hotkey, new_diff)
 
 def _select_diff_cfg(v, kind: str):
     """

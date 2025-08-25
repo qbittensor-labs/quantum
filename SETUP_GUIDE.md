@@ -129,6 +129,16 @@ To add a custom solver:
 
 > **Note**: Validators require substantial computational resources to generate quantum circuits fast enough to serve all miners. If you cannot meet these requirements, consider delegating to our validator.
 
+### Metrics
+- Targeted metrics are collected with Open Telemetry and published to Grafana.
+- `<grafana token>` specified below 
+
+> **Note**: If you are updating from a version before metrics, you must update the `pm2` commannd:
+
+```bash
+pm2 restart --name your_process_name_here --update-env --env OTEL_EXPORTER_OTLP_ENDPOINT="https://otlp-gateway-prod-us-east-2.grafana.net/otlp" --env OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic%20<grafana token>"
+````
+
 ### Validator Setup
 
 > **Note**: We have a hardcoded list of Whitelisted Validators to satisfy our "certificate distribution" methods. While this enhances the capabilities of our subnet, it adds friction in getting your validator up and running. Please reach out to us directly if you want your Validator added to the Whitelist.
@@ -138,7 +148,15 @@ activate your venv
 Start your validator using PM2:
 
 ```bash
-pm2 start --name your_process_name_here "python neurons/validator.py --wallet.name your_wallet_name --wallet.hotkey your_hotkey_name --netuid 63 --subtensor.network put_network_here --logging.debug
+pm2 start --name your_process_name_here \
+  --env OTEL_EXPORTER_OTLP_ENDPOINT="https://otlp-gateway-prod-us-east-2.grafana.net/otlp" \
+  --env OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic%20<grafana token>" \
+  python neurons/validator.py \
+  --wallet.name your_wallet_name \
+  --wallet.hotkey your_hotkey_name \
+  --netuid 63 \
+  --subtensor.network finney \
+  --logging.debug
 ```
 
 ### Testnet Validator Setup
@@ -148,8 +166,13 @@ activate your venv
 For testing on the testnet:
 
 ```bash
-pm2 start --name your_process_name_here "python neurons/validator.py --wallet.name your_wallet_name --wallet.hotkey your_hotkey_name --netuid 380 --subtensor.network test --logging.debug
-
+pm2 start --name your_process_name_here \
+  python neurons/validator.py \
+  --wallet.name your_wallet_name \
+  --wallet.hotkey your_hotkey_name \
+  --netuid 380 \
+  --subtensor.network test \
+  --logging.debug
 ```
 
 **Important**: Validator-miner collusion is strictly monitored and will result in removal from the whitelist.

@@ -116,16 +116,10 @@ def _bootstrap(v: "Validator") -> None:
     v._resp_proc = ResponseProcessor(v)
 
     v._queue = v._producer.queue
-    v._executor = futures.ThreadPoolExecutor(max_workers=_DISPATCH_WORKERS, thread_name_prefix="dispatch")
 
     if not hasattr(v, "_dispatcher_thread"):
         v._dispatcher_thread = threading.Thread(target=_dispatcher_loop, args=(v,), name="Dispatcher", daemon=True)
         v._dispatcher_thread.start()
-
-    bt.logging.info(
-        f"Validator bootstrap complete - single-threaded generation, dispatch_workers={_DISPATCH_WORKERS}"
-    )
-
 
 def _dispatcher_loop(v: "Validator") -> None:
     while True:
@@ -144,9 +138,7 @@ def _dispatcher_loop(v: "Validator") -> None:
                 v._queue.put(item)
                 time.sleep(_DISPATCH_SLEEP)
                 continue
-        v._executor.submit(_handle_item, v, item)
-        time.sleep(_DISPATCH_SLEEP)
-
+        _handle_item(v, item)
 
 _dendrite_lock = threading.Lock()
 

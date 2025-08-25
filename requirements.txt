@@ -3,6 +3,9 @@ expecttest==0.3.0
 gitpython==3.1.40
 matplotlib
 numpy>=2.0.1,<2.1.0
+opentelemetry-api==1.36.0
+opentelemetry-exporter-otlp-proto-http==1.36.0
+opentelemetry-sdk==1.36.0
 optuna==4.4.0
 pydantic==2.11.7
 pytest>=8.0.0

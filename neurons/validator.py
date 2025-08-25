@@ -14,6 +14,7 @@ from pathlib import Path
 from qbittensor.base.validator import BaseValidatorNeuron
 
 from qbittensor.validator.forward import forward
+from qbittensor.validator.services.metrics import MetricsService
 from qbittensor.validator.utils.auto_updater import start_updater, stop_updater
 
 CLEANUP_FLAG = Path("/tmp/validator_cleanup_done")
@@ -51,12 +52,15 @@ class Validator(BaseValidatorNeuron):
 
         bt.logging.info("Validator starting (sync mode)")
 
+        self.metrics_service = MetricsService(validator_hotkey=self.wallet.hotkey.ss58_address, network=self.subtensor.network)
+
         # Validator git repo update worker
         #start_updater(check_interval_minutes=5)
 
         try:
             while True:
                 try:
+                    self.metrics_service.record_heardbeat()
                     #bt.logging.info(f"step={self.step} uid={self.uid}")
                     self.metagraph.sync(subtensor=self.subtensor)
                     self.forward() # sync now
@@ -67,6 +71,8 @@ class Validator(BaseValidatorNeuron):
                 except Exception as e:
                     bt.logging.error(f"loop error: {e}", exc_info=True)
         finally:
+            self.metrics_service.shutdown()
+
             bt.logging.info("Stopping auto-updater...")
             #stop_updater()
             if self.is_running:

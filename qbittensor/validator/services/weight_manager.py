@@ -8,13 +8,13 @@ from typing import TYPE_CHECKING
 import torch
 import bittensor as bt
 
-if TYPE_CHECKING:  # avoid a hard import cycle
+if TYPE_CHECKING: # avoid a hard import cycle
     from qbittensor.validator import Validator
 
 # CONSTANTS
-SCORING_INTERVAL = 15 * 60  # every 15 min
-WEIGHT_SETTING_INTERVAL = 20 * 60  # every 30 min
-MIN_WEIGHT = 0.0001  # floor weight for active miners
+SCORING_INTERVAL = 15 * 60 # every 15 min
+WEIGHT_SETTING_INTERVAL = 20 * 60 # every 30 min
+MIN_WEIGHT = 0.0001 # floor weight for active miners
 
 
 class WeightManager:
@@ -44,7 +44,7 @@ class WeightManager:
             self.validator._scoring_mgr.update_daily_score_history()
             self.last_scoring_time = now
             bt.logging.info("Updated daily scoring history")
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc: # pragma: no cover
             bt.logging.error(f"Scoring update failed: {exc}", exc_info=True)
 
     def _set_weights(self, now: float) -> None:
@@ -57,14 +57,14 @@ class WeightManager:
                 )
             except ValueError:
                 bt.logging.warning("Hotkey not found in metagraph")
-                return  # still update timestamp below
+                return # still update timestamp below
 
             scores = self.validator._scoring_mgr.calculate_decayed_scores(
                 lookback_days=2
             )
             if not scores:
                 bt.logging.warning("No scores available for weight calculation")
-                return  # still update timestamp below
+                return # still update timestamp below
 
             m = self.validator.metagraph
             hk_to_uid = {m.hotkeys[u]: u for u in m.uids if m.axons[u].is_serving}
@@ -100,6 +100,8 @@ class WeightManager:
                     scores.items(), key=lambda x: x[1], reverse=True
                 )[:5]:
                     bt.logging.info(f"hotkey {uid_}: {score:.4f}")
+
+                self.validator.metrics_service.set_miner_weights(weights, m.hotkeys)
             else:
                 bt.logging.error(f"Weight extrinsic failed: {result}")
 
@@ -120,5 +122,5 @@ class WeightManager:
         try:
             self.validator._scoring_mgr.cleanup(retention_days=retention_days)
             bt.logging.info("Cleaned up old scoring data")
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc: # pragma: no cover
             bt.logging.error(f"Scoring cleanup failed: {exc}", exc_info=True)
