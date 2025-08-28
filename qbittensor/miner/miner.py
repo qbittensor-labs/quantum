@@ -34,8 +34,8 @@ _assembler = SynapseAssembler()
 _cleanup = CertificateCleanup(
     cert_dir=_CERT_DIR,
     historical_dir=_OLD_CERT_DIR,
-    archive_after_hours=12,
-    delete_after_days=2,
+    archive_after_hours=48,
+    delete_after_days=7,
     cleanup_interval_minutes=60,
 )
 
@@ -72,16 +72,9 @@ def _handle_challenge(syn: CircuitSynapse) -> CircuitSynapse:
 
     # verify certificates just received
     received = _verifier.validate_batch(syn)
-    if received:
-        save_to = _BASE_DIR / "certificates"
-        _verifier.persist(received, save_to)
-        bt.logging.trace(
-            f"[cert] ✅ stored {len(received)} certs "
-            f"from {syn.validator_hotkey or '<?>'} in {save_to}"
-        )
 
     solver = _get_solver_for_synapse(syn)
-    
+
     validator = getattr(syn, "validator_hotkey", None)
     ready = solver.drain(n=10000, validator_hotkey=validator) # set to large value in case cleanup fails
 
@@ -90,7 +83,7 @@ def _handle_challenge(syn: CircuitSynapse) -> CircuitSynapse:
     circuit_type = getattr(syn, 'circuit_kind', type(syn).__name__)
     bt.logging.info(f"Processing {circuit_type} circuit from {validator or 'unknown'}")
 
-    out = _assembler.embed(syn, ready, newly_verified=received)
+    out = _assembler.embed(syn, ready, newly_verified=received, validator_hotkey=validator)
     if hasattr(syn, "desired_difficulty"):
         out.desired_difficulty = syn.desired_difficulty
 

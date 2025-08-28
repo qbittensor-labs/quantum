@@ -33,7 +33,6 @@ _CPU_COUNT = max(1, os.cpu_count() or 1)
 _DISPATCH_WORKERS = max(4, min(32, _CPU_COUNT * 2))
 _QUEUE_SIZE = 128
 
-RPC_DEADLINE = 10
 CFG_DIR = Path(__file__).resolve().parent / "config"
 CFG_DIR.mkdir(exist_ok=True)
 _REFRESH_SECONDS = 300

@@ -1,12 +1,11 @@
-import json, pathlib
+import json
+import pathlib
 import bittensor as bt
 from qbittensor.protocol import ChallengeCircuits
 from qbittensor.common.certificate import Certificate
 
-
 _CERT_DIR = pathlib.Path(__file__).resolve().parents[1] / "certificates"
 _CERT_DIR.mkdir(exist_ok=True, parents=True)
-
 
 class CertificateStore:
     """
@@ -14,17 +13,15 @@ class CertificateStore:
     to disk, and hands out a fresh batch on every call to drain().
     """
 
-    def __init__(self, cap: int = 256):
-        self._cap = cap
-        self._queue: list[dict] = []
+    # Persist, but don't load into the queue.
+    def store(self, certs: list, validator_hotkey: str) -> None:
+        if not certs:
+            bt.logging.trace("[cert] No certs to store.")
+            return
 
-    def add(self, certs: list):
-        """
-        Accepts a mix of Certificate objects **or** already-serialised dicts.
-        Normalises everything to a plain dict before queuing / persisting.
-        """
+        stored_count = 0
         for c in certs:
-            # normalize
+            # Normalize to dict
             if isinstance(c, Certificate):
                 data = c.model_dump()
             elif isinstance(c, dict):
@@ -33,25 +30,43 @@ class CertificateStore:
                 bt.logging.warning(f"[cstore] ignoring unsupported type: {type(c)}")
                 continue
 
-            # push into RAM queue
-            self._queue.append(data)
+            # Optional: Check for hotkey mismatch
+            internal_vhk = data.get("validator_hotkey", "unknown")
+            if internal_vhk != validator_hotkey:
+                bt.logging.warning(f"[cstore] Hotkey mismatch: cert '{internal_vhk}' != passed '{validator_hotkey}'")
 
-            # write to disk (audit / restart-safety)
             cid = data.get("challenge_id", "unknown")
-            vhk = data.get("validator_hotkey", "unknown")
-            fname = _CERT_DIR / f"{cid}__{vhk}.json"
-            fname.write_text(json.dumps(data, separators=(",", ":")))
+            fname = _CERT_DIR / f"{cid}__{validator_hotkey}.json"
+            try:
+                fname.write_text(json.dumps(data, separators=(",", ":")))
+                stored_count += 1
+            except Exception as e:
+                bt.logging.warning(f"[cstore] Failed to write {fname}: {e}")
 
-        # keep only the newest <cap> certs in RAM
-        self._queue = self._queue[-self._cap :]
+        bt.logging.trace(
+            f"[cert] ✅ stored {stored_count} certs "
+            f"from {validator_hotkey or '<?>'} in {_CERT_DIR}"
+        )
 
-    def drain(self, n: int = 256) -> list[dict]:
-        return self._queue[:n]
+    # Collect all certificates from disk
+    def load(self, validator_hotkey: str, n: int = 10) -> list[dict]:
+        certs: list[dict] = []
+        file_paths = sorted(
+            _CERT_DIR.glob("*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True
+        )[:n]
 
+        for fp in file_paths:
+            try:
+                data = json.loads(fp.read_text())
+                vhk = data.get("validator_hotkey", "unknown")
+                if vhk != validator_hotkey:
+                    certs.append(data)
+            except Exception as e:
+                bt.logging.warning(f"[assembler] could not load {fp}: {e}")
 
-# a single global store shared by all assemblers
-_cstore = CertificateStore()
-
+        return certs
 
 class SynapseAssembler:
     """Builds the outbound ChallengeCircuits reply."""
@@ -61,31 +76,22 @@ class SynapseAssembler:
         syn: ChallengeCircuits,
         ready: list[tuple[str, str]],
         newly_verified: list[Certificate] | None = None,
+        validator_hotkey: str = "",
     ) -> ChallengeCircuits:
-        # pull every JSON file on disk into memory
-        disk_batch = []
-        for fp in _CERT_DIR.glob("*.json"):
-            try:
-                disk_batch.append(json.loads(fp.read_text()))
-            except Exception as e:
-                bt.logging.warning(f"[assembler] could not load {fp}: {e}")
+        cstore = CertificateStore()
+        gossip = cstore.load(validator_hotkey=validator_hotkey, n=1000)
 
-        if disk_batch:
-            _cstore.add(disk_batch)
-
-        # enqueue certificates we just accepted from the validator
+        # save certificates we just accepted from the validator, but don't include them
         if newly_verified:
-            _cstore.add(newly_verified)
+            cstore.store(newly_verified, validator_hotkey)
 
-        # attach up to 256 certs to *this* synapse
-        gossip = _cstore.drain(n=256)
+        # attach up to certs to *this* synapse
         if gossip:
             syn.attach_certificates(gossip)  # ← top-level list, no JSON wrapper
             bt.logging.info(f"[assembler] 📤 gossiping {len(gossip)} certs")
 
         # embed solutions exactly like before
         bt.logging.debug(f"[assembler] embedding {len(ready)} solutions")
-
         if not ready:
             syn.solution_bitstring = ""
         else:
@@ -100,7 +106,6 @@ class SynapseAssembler:
                 },
                 separators=(",", ":"),
             )
-
         bt.logging.info(
             f"[assembler] sending solution payload: {syn.solution_bitstring}"
         )
