@@ -18,6 +18,7 @@ from qbittensor.validator.reward import ScoringManager
 from qbittensor.validator.services.certificate_issuer import CertificateIssuer
 from qbittensor.validator.services.solution_processor import SolutionProcessor
 from qbittensor.validator.services.weight_manager import WeightManager
+from qbittensor.validator.services.certificate_manager import CertificateManager
 from qbittensor.validator.utils.whitelist import load_whitelist
 from qbittensor.validator.database.fixups import apply_fixups 
 
@@ -106,6 +107,7 @@ def _bootstrap(v: _ValidatorLike) -> None:
     }
 
     v.certificate_issuer = CertificateIssuer(wallet=v.wallet)
+    v._cert_mgr = CertificateManager(v.certificate_issuer)
     v._sol_proc  = SolutionProcessor(cert_issuer=v.certificate_issuer)
     v._scoring_mgr = ScoringManager(str(db_path))
     v._weight_mgr  = WeightManager(v)
@@ -211,6 +213,7 @@ def forward(self: _ValidatorLike) -> None:
 
     # weight push
     self._weight_mgr.update()
+    self._cert_mgr.update()
 
 
 def shutdown(v: _ValidatorLike, timeout_s: float | None = None) -> None:
