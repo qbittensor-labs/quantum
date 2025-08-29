@@ -35,7 +35,7 @@ _QUEUE_SIZE = 128
 
 CFG_DIR = Path(__file__).resolve().parent / "config"
 CFG_DIR.mkdir(exist_ok=True)
-_REFRESH_SECONDS = 300
+_REFRESH_SECONDS = 450
 _DISPATCH_SLEEP  = 0.01
 _inflight_lock   = threading.Lock()
 
@@ -205,10 +205,9 @@ def forward(self: _ValidatorLike) -> None:
     if not getattr(self, "_bootstrapped", False):
         _bootstrap(self)
 
-    now = time.time()
-    if now - getattr(self, "_last_uid_refresh", 0) >= _REFRESH_SECONDS:
+    if time.time() - getattr(self, "_last_uid_refresh", 0) >= _REFRESH_SECONDS:
         _refresh_uid_deps(self)
-        self._last_uid_refresh = now
+        self._last_uid_refresh = time.time()
 
     # weight push
     self._weight_mgr.update()
