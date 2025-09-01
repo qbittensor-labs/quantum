@@ -151,7 +151,10 @@ def _dispatcher_loop(v: _ValidatorLike) -> None:
                 v._queue.put(item)
                 time.sleep(_DISPATCH_SLEEP)
                 continue
-        _handle_item(v, item)
+        try:
+            _handle_item(v, item)
+        except Exception as e:
+            bt.logging.error(f"[dispatcher] unhandled error: {e}", exc_info=True)
     bt.logging.info("[dispatcher] shutdown signal received; exiting dispatcher loop")
 
 _dendrite_lock = threading.Lock()

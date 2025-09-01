@@ -103,53 +103,52 @@ def _service_one_uid(
     total = inserted = 0
     for raw in resp.certificates:
         total += 1
-        cert = raw if isinstance(raw, Certificate) else Certificate(**raw)
-        cert_uid = as_int_uid(cert.miner_uid)
-        if cert_uid != uid:
-            continue
-        cert_hkey = getattr(cert, "miner_hotkey", None)
-
-        full_id_ok = (cert_uid == uid and cert_hkey == miner_hotkey)
-
-        # legacy certificate - no hotkey & timestamp before cutoff
         try:
-            cert_ts = dt.datetime.fromisoformat(cert.timestamp)
-            if cert_ts.tzinfo is None:
-                cert_ts = cert_ts.replace(tzinfo=timezone.utc)
-            cert_ts = cert_ts.astimezone(timezone.utc)
-        except Exception:
-            cert_ts = dt.datetime.max.replace(tzinfo=timezone.utc) # force-fail
+            cert = raw if isinstance(raw, Certificate) else Certificate(**raw)
+            cert_uid = as_int_uid(cert.miner_uid)
+            if cert_uid != uid:
+                continue
+            cert_hkey = getattr(cert, "miner_hotkey", None)
 
-        legacy_ok = (cert_hkey in (None, "")) and cert_uid == uid and cert_ts < _CUTOFF_TS
+            full_id_ok = (cert_uid == uid and cert_hkey == miner_hotkey)
 
-        if not (full_id_ok or legacy_ok):
-            continue
+            # legacy certificate - no hotkey & timestamp before cutoff
+            try:
+                cert_ts = dt.datetime.fromisoformat(cert.timestamp)
+                if cert_ts.tzinfo is None:
+                    cert_ts = cert_ts.replace(tzinfo=timezone.utc)
+                cert_ts = cert_ts.astimezone(timezone.utc)
+            except Exception:
+                cert_ts = dt.datetime.max.replace(tzinfo=timezone.utc) # force-fail
 
-        # cryptographic proof (handles legacy bytes via Certificate.verify fallback)
-        if not cert.verify():
-            continue
+            legacy_ok = (cert_hkey in (None, "")) and cert_uid == uid and cert_ts < _CUTOFF_TS
+            if not (full_id_ok or legacy_ok):
+                continue
 
-        if cert.validator_hotkey not in v._whitelist:
-            bt.logging.warning(
-                f"[cert] hotkey {cert.validator_hotkey[:8]} not whitelisted"
-            )
-            continue
+            # cryptographic proof (handles legacy bytes via Certificate.verify fallback)
+            if not cert.verify():
+                bt.logging.warning(f"[cert] failed verification for UID {uid}")
+                continue
 
-        try:
+            if cert.validator_hotkey not in v._whitelist:
+                bt.logging.warning(
+                    f"[cert] hotkey {cert.validator_hotkey[:8]} not whitelisted"
+                )
+                continue
+
             current_hotkey_for_uid = v.metagraph.hotkeys[cert_uid]
-
             if log_certificate_as_solution(cert, cert_hkey or current_hotkey_for_uid):
                 inserted += 1
 
         except IndexError:
             bt.logging.warning(
-                f"[cert] Received gossiped cert for UID {cert.miner_uid}, but UID not in metagraph. Skipping."
+                f"[cert] Received gossiped cert for UID {uid}, but UID not in metagraph. Skipping."
             )
         except Exception as exc:
-            bt.logging.error(f"[cert] DB insert failed: {exc}", exc_info=True)
+            bt.logging.error(f"[cert] error handling certificate: {exc}", exc_info=True)
 
     if total:
-        bt.logging.info(f"[cert] inserted {inserted} certificates")
+        bt.logging.info(f"[cert] inserted {inserted}/{total} certificates")
 
     # solutions
     stored = 0
@@ -161,16 +160,19 @@ def _service_one_uid(
                 sol.circuit_type = kind
             except Exception:
                 pass
-        if v._sol_proc.process(
-            uid=uid,
-            miner_hotkey=miner_hotkey,
-            sol=sol,
-            time_sent=t_sent,
-        ):
-            stored += 1
+        try:
+            if v._sol_proc.process(
+                uid=uid,
+                miner_hotkey=miner_hotkey,
+                sol=sol,
+                time_sent=t_sent,
+            ):
+                stored += 1
+                # Record the solution received metric
+                v.metrics_service.record_solution_received(kind, uid, miner_hotkey)
+        except Exception as e:
+            bt.logging.error(f"[solution] processing failed for UID {uid}: {e}", exc_info=True)
 
-            # Record the solution received metric
-            v.metrics_service.record_solution_received(kind, uid, miner_hotkey)
     if stored:
         bt.logging.info(f"[solution] ✅ Processed solutions from UID {uid}")
 
