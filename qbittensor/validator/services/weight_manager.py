@@ -13,9 +13,9 @@ if TYPE_CHECKING: # avoid a hard import cycle
 
 # CONSTANTS
 SCORING_INTERVAL = 15 * 60 # every 15 min
-WEIGHT_SETTING_INTERVAL = 20 * 60 # every 30 min
+WEIGHT_SETTING_INTERVAL = 30 * 60 # every 30 min
 MIN_WEIGHT = 0.0001 # floor weight for active miners
-MINER_POOL_UID = 32
+MINER_POOL_UID = 235
 MINER_POOL_SHARE = 0.1
 
 
@@ -96,6 +96,7 @@ class WeightManager:
             bt.logging.info(
                 f"Setting weights for { (weights > 0).sum().item() } miners"
             )
+            bt.logging.info(weights)
 
             result = self.validator.subtensor.set_weights(
                 wallet=self.validator.wallet,
