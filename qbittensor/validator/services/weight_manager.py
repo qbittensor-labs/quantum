@@ -15,6 +15,8 @@ if TYPE_CHECKING: # avoid a hard import cycle
 SCORING_INTERVAL = 15 * 60 # every 15 min
 WEIGHT_SETTING_INTERVAL = 20 * 60 # every 30 min
 MIN_WEIGHT = 0.0001 # floor weight for active miners
+MINER_POOL_UID = 32
+MINER_POOL_SHARE = 0.1
 
 
 class WeightManager:
@@ -80,6 +82,16 @@ class WeightManager:
             total = weights.sum()
             if total > 0:
                 weights /= total
+
+                # Apply 90/10 split - 10% goes to pool to reward publishing
+                special_weight = MINER_POOL_SHARE
+                remaining_share = 1.0 - MINER_POOL_SHARE
+
+                # Scale down all existing weights to 90%
+                weights *= remaining_share
+
+                # Add the fixed 10% to the miner incentive pool UID
+                weights[MINER_POOL_UID] += special_weight
 
             bt.logging.info(
                 f"Setting weights for { (weights > 0).sum().item() } miners"
