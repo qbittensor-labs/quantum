@@ -15,11 +15,11 @@ import multiprocessing as mp
 
 import bittensor as bt
 
-from qbittensor.protocol import ChallengeCircuits
 
 from .config import DEFAULT_QUEUE_SIZE, DEFAULT_SCAN_INTERVAL, Paths
 from .extract import cid_from_filename, qasm_from_file, qasm_from_synapse
 from .storage import Storage
+from qbittensor.protocol import _CircuitSynapseBase
 
 __all__ = ["SolverWorker"]
 
@@ -55,15 +55,21 @@ class SolverWorker:
             return
         self._start_thread()
 
-    def submit_synapse(self, syn: ChallengeCircuits) -> None:
+    def submit_synapse(self, syn: _CircuitSynapseBase) -> None:
         """Extract QASM, circuit type & CID then push to queue (idempotent)."""
         cid = syn.challenge_id
         if self.storage.is_solved(cid):
             return
-        if qasm := qasm_from_synapse(syn):
+        qasm = qasm_from_synapse(syn)
+        # Handle None/empty QASM as special case for difficulty queries
+        is_empty_qasm = syn.circuit_data is None or syn.circuit_data == "" or qasm is None or qasm.strip() == ""
+
+        if qasm or is_empty_qasm:
             validator_hotkey = getattr(syn, "validator_hotkey", None) or ""
             circuit_type = getattr(syn, "circuit_kind", "peaked")
-            self._enqueue(cid, qasm, circuit_type, validator_hotkey)
+            # For empty QASM, use a dummy QASM string for processing
+            qasm_to_process = qasm if qasm else ""
+            self._enqueue(cid, qasm_to_process, circuit_type, validator_hotkey)
 
     def submit_file(self, fp: Path) -> None:
         cid = cid_from_filename(fp)
@@ -84,8 +90,10 @@ class SolverWorker:
     def _enqueue(self, cid: str, qasm: str, circuit_type: str, validator_hotkey: str = ""):
         try:
             self._queue.put_nowait((cid, qasm, circuit_type, validator_hotkey))
+            cid_short = cid[:10] if cid and isinstance(cid, str) else str(cid or 'unknown')[:10]
+            validator_short = validator_hotkey[:10] if validator_hotkey and isinstance(validator_hotkey, str) else 'unknown'
             bt.logging.debug(
-                f" queued {circuit_type} circuit {cid[:10]} from validator {validator_hotkey[:10] if validator_hotkey else 'unknown'}"
+                f" queued {circuit_type} circuit {cid_short} from validator {validator_short}"
             )
         except asyncio.QueueFull:
             bt.logging.warning(" solver queue full. dropping challenge")
@@ -116,13 +124,25 @@ class SolverWorker:
                 self._scan_unsolved_dir()
                 continue
 
-            bt.logging.debug(
-                f" solving {circuit_type} circuit {cid[:10]} from validator {validator_hotkey[:10] if validator_hotkey else 'unknown'}"
-            )
-            loop = asyncio.get_running_loop()
-            bits = await loop.run_in_executor(self.executor, self._solve, qasm, circuit_type)
-            bt.logging.debug(f" {cid[:10]} → {bits}")
-            self.storage.save_solution(cid, bits, circuit_type, validator_hotkey or None)
+            cid_display = cid[:10] if cid and isinstance(cid, str) else str(cid or 'unknown')[:10]
+            validator_display = validator_hotkey[:10] if validator_hotkey and isinstance(validator_hotkey, str) else 'unknown'
+
+            # Handle None/empty QASM (difficulty queries) gracefully
+            if qasm is None or not qasm or qasm.strip() == "":
+                bt.logging.debug(
+                    f" skipping empty/None QASM circuit {cid_display} (difficulty query)"
+                )
+                # Log empty qasm
+                bits = ""
+                bt.logging.debug(f" {cid_display} → {bits} (None/empty QASM for difficulty query)")
+            else:
+                bt.logging.debug(
+                    f" solving {circuit_type} circuit {cid_display} from validator {validator_display}"
+                )
+                loop = asyncio.get_running_loop()
+                bits = await loop.run_in_executor(self.executor, self._solve, qasm, circuit_type)
+                bt.logging.debug(f" {cid_display} → {bits}")
+                self.storage.save_solution(cid, bits, circuit_type, validator_hotkey or None)
             self._queue.task_done()
 
     # File‑system polling

@@ -10,8 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 import bittensor as bt
-
-from qbittensor.protocol import ChallengeCircuits
+from qbittensor.protocol import _CircuitSynapseBase
 
 __all__ = ["cid_from_filename", "qasm_from_file", "qasm_from_synapse"]
 
@@ -54,8 +53,8 @@ def qasm_from_file(fp: Path) -> Optional[str]:
     return None
 
 
-def qasm_from_synapse(syn: ChallengeCircuits) -> Optional[str]:
-    """Extract QASM from "circuit_data" of a ChallengeCircuits synapse."""
+def qasm_from_synapse(syn: _CircuitSynapseBase) -> Optional[str]:
+    """Extract QASM from "circuit_data" of a circuit synapse."""
     payload = syn.circuit_data or ""
 
     # Raw string

@@ -100,8 +100,3 @@ class ChallengeHStabCircuit(_CircuitSynapseBase):
     Hstabiliser circuit challenge.
     """
     circuit_kind: Literal["hstab"] = "hstab"
-
-
-# legacy circuit
-class ChallengeCircuits(_CircuitSynapseBase):
-    pass

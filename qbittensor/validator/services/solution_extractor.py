@@ -8,7 +8,6 @@ from typing import List
 
 import bittensor as bt
 from qbittensor.protocol import (
-    ChallengeCircuits, #legacy
     ChallengePeakedCircuit,
     ChallengeHStabCircuit,
 )
@@ -44,7 +43,6 @@ class SolutionExtractor:
 
         if isinstance(resp,
         (
-            ChallengeCircuits, # legacy
             ChallengePeakedCircuit,
             ChallengeHStabCircuit,
         ),

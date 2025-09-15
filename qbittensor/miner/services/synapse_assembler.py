@@ -1,8 +1,8 @@
 import json
 import pathlib
 import bittensor as bt
-from qbittensor.protocol import ChallengeCircuits
 from qbittensor.common.certificate import Certificate
+from qbittensor.protocol import _CircuitSynapseBase
 
 _CERT_DIR = pathlib.Path(__file__).resolve().parents[1] / "certificates"
 _CERT_DIR.mkdir(exist_ok=True, parents=True)
@@ -69,15 +69,15 @@ class CertificateStore:
         return certs
 
 class SynapseAssembler:
-    """Builds the outbound ChallengeCircuits reply."""
+    """Builds the outbound circuit synapse reply."""
 
     def embed(
         self,
-        syn: ChallengeCircuits,
+        syn: _CircuitSynapseBase,
         ready: list[tuple[str, str]],
         newly_verified: list[Certificate] | None = None,
         validator_hotkey: str = "",
-    ) -> ChallengeCircuits:
+    ) -> _CircuitSynapseBase:
         cstore = CertificateStore()
         gossip = cstore.load(validator_hotkey=validator_hotkey, n=1000)
 

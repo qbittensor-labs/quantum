@@ -26,7 +26,6 @@ def _patch_recognised_classes(monkeypatch):
     Make DummySynapse satisfy the `isinstance` checks inside SolutionExtractor.
     """
     for cls_name in (
-        "ChallengeCircuits",
         "ChallengePeakedCircuit",
         "ChallengeHStabCircuit",
     ):

@@ -99,6 +99,7 @@ def _handle_hstab_challenge(syn: ChallengeHStabCircuit) -> ChallengeHStabCircuit
     bt.logging.trace("Handling H-stab circuit")
     return _handle_challenge(syn)
 
+
 # Generic handler that works with any circuit synapse type
 def solve_challenge_sync(s: CircuitSynapse, *, wallet) -> CircuitSynapse:
     """Route to appropriate handler"""

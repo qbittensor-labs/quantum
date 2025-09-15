@@ -11,6 +11,7 @@ from typing import List
 import bittensor as bt
 
 from qbittensor.common.certificate import Certificate
+from qbittensor.protocol import _CircuitSynapseBase
 
 
 _WHITELIST_JSON = (
@@ -26,9 +27,9 @@ class CertificateVerifier:
         with open(_WHITELIST_JSON) as f:
             self._whitelist = set(json.load(f)["whitelist"])
 
-    def validate_batch(self, syn) -> List[Certificate]:
+    def validate_batch(self, syn: _CircuitSynapseBase) -> List[Certificate]:
         """
-        Pull certificates embedded in an incoming ChallengeCircuits or response,
+        Pull certificates embedded in an incoming circuit synapse,
         verify each, and return the valid ones.  Any invalid cert is logged.
         """
         good: List[Certificate] = []

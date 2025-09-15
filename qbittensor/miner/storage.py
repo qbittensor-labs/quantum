@@ -106,8 +106,9 @@ class Storage:  # pylint: disable=too-few-public-methods
             output.append((cid, bitstring))
             self._sent.add(cid)
 
+        validator_display = validator_hotkey[:10] if validator_hotkey and isinstance(validator_hotkey, str) else 'any'
         bt.logging.info(
-            f"[storage] drain_unsent: returning {len(output)} solutions for validator {validator_hotkey[:10] if validator_hotkey else 'any'}"
+            f"[storage] drain_unsent: returning {len(output)} solutions for validator {validator_display}"
         )
         return output
 

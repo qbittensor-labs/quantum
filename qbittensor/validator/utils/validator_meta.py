@@ -1,5 +1,5 @@
 """
-Lightweight container for information *about* a ChallengeCircuits synapse.
+Lightweight container for information about a circuit synapse.
 """
 from __future__ import annotations
 

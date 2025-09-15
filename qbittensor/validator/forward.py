@@ -11,6 +11,8 @@ import threading
 import time
 from pathlib import Path
 from typing import Protocol
+import json
+import math
 
 import bittensor as bt
 from qbittensor.validator.config.difficulty_config import DifficultyConfig
@@ -21,6 +23,7 @@ from qbittensor.validator.services.weight_manager import WeightManager
 from qbittensor.validator.services.certificate_manager import CertificateManager
 from qbittensor.validator.utils.whitelist import load_whitelist
 from qbittensor.validator.database.fixups import apply_fixups 
+from qbittensor.protocol import ChallengePeakedCircuit, ChallengeHStabCircuit
 
 try:
     import torch
@@ -74,7 +77,7 @@ def _bootstrap(v: _ValidatorLike) -> None:
     v._hotkey_cache: dict[int, str] = {}
 
     raw = v.metagraph.uids.tolist()
-    uid_list = [u for u in raw if v.metagraph.axons[u].is_serving]
+    uid_list = [u for u in raw if v.metagraph.axons[u].ip not in ("0.0.0.0", "", None) and v.metagraph.axons[u].port != 0]
 
     from qbittensor.validator.services.cursor_store import CursorStore
     v._cursor = CursorStore(Path(__file__).parent / "last_uid.txt")
@@ -134,6 +137,18 @@ def _bootstrap(v: _ValidatorLike) -> None:
         v._dispatcher_thread = threading.Thread(target=_dispatcher_loop, args=(v,), name="Dispatcher", daemon=True)
         v._dispatcher_thread.start()
 
+    # onboarding state
+    v._onboarded_path = Path(__file__).parent / "onboarded_miners.json"
+    try:
+        if v._onboarded_path.exists():
+            v._onboarded = set(json.loads(v._onboarded_path.read_text()))
+        else:
+            v._onboarded = set()
+    except Exception:
+        v._onboarded = set()
+    v._seen_hotkeys = set()
+    v._onboard_baseline_set = False
+
 def _dispatcher_loop(v: _ValidatorLike) -> None:
     while not getattr(v, "_shutdown_event", threading.Event()).is_set():
         try:
@@ -183,15 +198,13 @@ def _refresh_uid_deps(v: _ValidatorLike) -> None:
     bt.logging.info("refreshing metagraph…")
     v.metagraph.sync()
 
-    live = {u for u in v.metagraph.uids if v.metagraph.axons[u].is_serving}
+    live = {u for u in v.metagraph.uids if v.metagraph.axons[u].ip not in ("0.0.0.0", "", None) and v.metagraph.axons[u].port != 0}
     for uid, hk in enumerate(v.metagraph.hotkeys):
         if uid not in live:
             continue
         prev = v._hotkey_cache.get(uid)
         if prev and prev != hk:
-            bt.logging.info(f"UID {uid} reassigned {prev} - {hk}; resetting difficulty")
-            for cfg in v._diff_cfg.values():
-               cfg.set(uid, 0.0)
+            bt.logging.info(f"UID {uid} reassigned {prev} - {hk}")
     v._hotkey_cache = {uid: hk for uid, hk in enumerate(v.metagraph.hotkeys)}
 
     final_uids = sorted(live)
@@ -201,6 +214,29 @@ def _refresh_uid_deps(v: _ValidatorLike) -> None:
             cfg.update_uid_list(final_uids)
         v._producer.update_uid_list(final_uids)
         bt.logging.info(f"metagraph changed: {len(final_uids)} live miners")
+
+    # one-time onboarding by hotkey
+    try:
+        hotkey_by_uid = {uid: v.metagraph.hotkeys[uid] for uid in getattr(v, "_uid_cache", [])}
+        current_hks = {hk for hk in hotkey_by_uid.values() if hk}
+
+        if not v._onboard_baseline_set:
+            v._seen_hotkeys = set(current_hks) | getattr(v, "_onboarded", set())
+            v._onboard_baseline_set = True
+            return
+
+        already = set(getattr(v, "_seen_hotkeys", set())) | set(getattr(v, "_onboarded", set()))
+        new_hks = [hk for hk in current_hks if hk not in already]
+
+        for hk in new_hks:
+            uid = next((u for u, h in hotkey_by_uid.items() if h == hk), None)
+            if uid is None:
+                continue
+            bt.logging.info(f"[onboard] new miner detected: uid {uid} hotkey {hk}")
+            _initialize_miner_difficulty(v, uid)
+            v._seen_hotkeys.add(hk)
+    except Exception:
+        bt.logging.debug("[onboard] scan error", exc_info=True)
 
 
 def forward(self: _ValidatorLike) -> None:
@@ -257,7 +293,7 @@ def shutdown(v: _ValidatorLike, timeout_s: float | None = None) -> None:
                 break
             elapsed = time.time() - t0
             if elapsed > timeout_s:
-                bt.logging.error(f"[shutdown] hard timeout after {elapsed:.1f}s with {remaining} in‑flight; forcing exit")
+                bt.logging.error(f"[shutdown] hard timeout after {elapsed:.1f}s with {remaining} in-flight; forcing exit")
                 import os as _os
                 _os._exit(1)
             time.sleep(0.25)
@@ -285,3 +321,78 @@ def shutdown(v: _ValidatorLike, timeout_s: float | None = None) -> None:
 
 
 __all__ = ["forward", "shutdown"]
+
+# onboarding methods
+def _save_onboarded(v: _ValidatorLike) -> None:
+    try:
+        v._onboarded_path.write_text(json.dumps(sorted(getattr(v, "_onboarded", set()))))
+    except Exception:
+        pass
+
+def _initialize_miner_difficulty(v: _ValidatorLike, uid: int) -> None:
+    """Send empty circuit challenges to get miner difficulty"""
+    try:
+        ax = v.metagraph.axons[uid]
+        if ax.ip in ("0.0.0.0", "", None) or ax.port == 0:
+            return
+
+        miner_hk = v.metagraph.hotkeys[uid]
+        validator_hk = v.wallet.hotkey.ss58_address
+
+        d = bt.dendrite(wallet=v.wallet)
+        try:
+            # Send empty peaked circuit challenge
+            peaked_syn = ChallengePeakedCircuit(
+                validator_hotkey=validator_hk,
+                circuit_data=None,  # No QASM (difficulty query)
+                difficulty_level=0.0
+            )
+            try:
+                peaked_resp = d.query(ax, peaked_syn, timeout=5.0)
+                if hasattr(peaked_resp, "desired_difficulty") and peaked_resp.desired_difficulty is not None:
+                    try:
+                        fv = float(peaked_resp.desired_difficulty)
+                        if math.isfinite(fv) and fv >= 0.0:
+                            cfg = v._diff_cfg.get("peaked")
+                            if cfg is not None:
+                                changed = cfg.set(uid, fv)
+                                if changed:
+                                    bt.logging.info(f"[onboard] set peaked difficulty for uid {uid} to {fv:.2f}")
+                    except Exception as e:
+                        bt.logging.debug(f"[onboard] failed to set peaked for uid {uid}: {e}")
+            except Exception as e:
+                bt.logging.debug(f"[onboard] peaked query failed for uid {uid}: {e}")
+
+            # Send empty hstab circuit challenge
+            hstab_syn = ChallengeHStabCircuit(
+                validator_hotkey=validator_hk,
+                circuit_data=None,  # No QASM (difficulty query)
+                difficulty_level=0.0
+            )
+            try:
+                hstab_resp = d.query(ax, hstab_syn, timeout=4.0)
+                if hasattr(hstab_resp, "desired_difficulty") and hstab_resp.desired_difficulty is not None:
+                    try:
+                        fv = float(hstab_resp.desired_difficulty)
+                        if math.isfinite(fv) and fv >= 0.0:
+                            cfg = v._diff_cfg.get("hstab")
+                            if cfg is not None:
+                                changed = cfg.set(uid, fv)
+                                if changed:
+                                    bt.logging.info(f"[onboard] set hstab difficulty for uid {uid} to {fv:.2f}")
+                    except Exception as e:
+                        bt.logging.debug(f"[onboard] failed to set hstab for uid {uid}: {e}")
+            except Exception as e:
+                bt.logging.debug(f"[onboard] hstab query failed for uid {uid}: {e}")
+
+        finally:
+            try:
+                d.close()
+            except Exception:
+                pass
+
+        v._onboarded.add(miner_hk)
+        _save_onboarded(v)
+
+    except Exception as e:
+        bt.logging.debug(f"[onboard] error uid {uid}: {e}")

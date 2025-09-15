@@ -14,6 +14,20 @@ import bittensor as bt
 
 log_file_handler = None
 
+# OOM exit code + detector
+OOM_EXIT = 99
+
+def _is_cuda_oom(exc: BaseException, extra_text: str = "") -> bool:
+    msg = f"{type(exc).__name__}: {exc} {extra_text or ''}".lower()
+    return any(s in msg for s in [
+        "cuda out of memory",
+        "torch.cuda.outofmemoryerror",
+        "runtimeerror: cuda error: out of memory",
+        "cublas_status_alloc_failed",
+        "cuda error: memory allocation",
+        "hip out of memory",
+    ])
+
 def setup_logging(args):
     """Sets up logging to redirect both print and bt.logging to a log file."""
     global log_file_handler
@@ -170,4 +184,15 @@ if __name__ == "__main__":
             bt.logging.critical("FATAL UNHANDLED EXCEPTION")
             bt.logging.exception("Unhandled exception in worker")
             log_file_handler.close()
+        # return OOM-specific code so parent can react deterministically
+        try:
+            is_oom = _is_cuda_oom(e)
+        except Exception:
+            is_oom = False
+        if is_oom:
+            try:
+                _cleanup_cuda()
+            except Exception:
+                pass
+            sys.exit(OOM_EXIT)
         sys.exit(1)

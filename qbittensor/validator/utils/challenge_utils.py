@@ -37,12 +37,67 @@ __all__ = [
     "build_peaked_challenge",
     "build_hstab_challenge",
 ]
+
+# clear error type surfaced to the validator loop
+class ValidatorOOMError(RuntimeError):
+    pass
+
+# dynamic cap state
+_PEAKED_CAP_DEFAULT = 41
+_PEAKED_CAP_MIN = 16
+_RUN_DIR = Path.cwd()
+_PEAKED_CAP_FILE = _RUN_DIR / "validator_peaked_max_cap"
+_PEAKED_OOM_COUNT_FILE = _RUN_DIR / "validator_peaked_oom_count"
+_PEAKED_OOMS_PER_STEP = 3
+
+# local runtime knobs
+_GPU_RESET_ON_OOM = True
+_GPU_ID = 0
+_GEN_TIMEOUT_S = 1200.0
+
+def _read_int_file(path: str | Path, default: int) -> int:
+    try:
+        with open(path, "r") as f:
+            return int(f.read().strip())
+    except Exception:
+        return default
+
+def _write_int_file(path: str | Path, value: int) -> None:
+    try:
+        with open(path, "w") as f:
+            f.write(str(int(value)))
+    except Exception:
+        pass
+
+def _current_peaked_max_cap() -> int:
+    cap = _read_int_file(_PEAKED_CAP_FILE, _PEAKED_CAP_DEFAULT)
+    cap = max(_PEAKED_CAP_MIN, min(int(cap), _PEAKED_CAP_DEFAULT))
+    return cap
+
+def _register_peaked_oom_and_maybe_lower_cap() -> None:
+    # increment OOM counter
+    cnt = _read_int_file(_PEAKED_OOM_COUNT_FILE, 0) + 1
+    _write_int_file(_PEAKED_OOM_COUNT_FILE, cnt)
+    # every N OOMs, reduce cap by 1 (not below minimum), reset counter
+    if cnt >= _PEAKED_OOMS_PER_STEP:
+        cap = _current_peaked_max_cap()
+        new_cap = max(_PEAKED_CAP_MIN, cap - 1)
+        if new_cap != cap:
+            bt.logging.warning(f"[peaked] lowering dynamic max cap from {cap} to {new_cap} after {cnt} OOMs")
+            _write_int_file(_PEAKED_CAP_FILE, new_cap)
+        _write_int_file(_PEAKED_OOM_COUNT_FILE, 0)
+
 def _clear_memory() -> None:
     try:
         import torch  # type: ignore
         if torch.cuda.is_available():
             try:
                 torch.cuda.empty_cache()
+            except Exception:
+                pass
+            try:
+                torch.cuda.synchronize()
+                torch.cuda.ipc_collect()
             except Exception:
                 pass
     except Exception:
@@ -56,6 +111,53 @@ def _clear_memory() -> None:
     except Exception:
         pass
 
+def _run_cmd(cmd: list[str], timeout: int = 60) -> tuple[int, str, str]:
+    try:
+        p = subprocess.run(cmd, text=True, capture_output=True, timeout=timeout)
+        return p.returncode, (p.stdout or "").strip(), (p.stderr or "").strip()
+    except subprocess.TimeoutExpired as e:
+        return 124, "", f"timeout: {e}"
+    except Exception as e:
+        return 125, "", f"error: {e}"
+
+def _kill_gen_worker() -> None:
+    try:
+        rc, out, err = _run_cmd(["pkill", "-f", "gen_worker.py"], timeout=10)
+        if rc == 0:
+            bt.logging.info("[peaked][oom] pkill gen_worker.py -> rc=0")
+        elif rc in (1,):
+            bt.logging.info("[peaked][oom] pkill gen_worker.py -> no processes")
+        else:
+            bt.logging.warning(f"[peaked][oom] pkill gen_worker.py rc={rc} stderr={err}")
+    except Exception:
+        pass
+
+def _maybe_gpu_device_reset(gpu_id: int) -> None:
+    try:
+        if not _GPU_RESET_ON_OOM:
+            return
+        cmds: list[list[str]] = []
+        # try non-sudo first
+        cmds.append(["nvidia-smi", "--gpu-reset", "-i", str(gpu_id)])
+        # then sudo -n (non-interactive fail-fast)
+        cmds.append(["sudo", "-n", "nvidia-smi", "--gpu-reset", "-i", str(gpu_id)])
+        # reload driver
+        cmds.append(["sudo", "-n", "rmmod", "nvidia_uvm", "nvidia_drm", "nvidia_modeset", "nvidia"])
+        cmds.append(["sudo", "-n", "modprobe", "nvidia"])
+        # MIG toggle attempts (non-sudo, then sudo -n)
+        for base in (["nvidia-smi"], ["sudo", "-n", "nvidia-smi"]):
+            cmds.append(base + ["-i", str(gpu_id), "-mig", "0"])
+            cmds.append(base + ["-i", str(gpu_id), "-mig", "1"])
+            cmds.append(base + ["-i", str(gpu_id), "-mig", "0"])
+
+        for c in cmds:
+            rc, out, err = _run_cmd(c, timeout=60)
+            bt.logging.info(f"[peaked][oom] {' '.join(c)} -> rc={rc}")
+            if err:
+                bt.logging.warning(f"[peaked][oom] stderr: {err}")
+    except Exception:
+        pass
+
 
 def _convert_peaked_difficulty_to_qubits(level: float) -> int:
     try:
@@ -66,7 +168,8 @@ def _convert_peaked_difficulty_to_qubits(level: float) -> int:
         nqubits = int(12 + 10 * np.log2(lvl + 3.9))
     else:
         nqubits = int(round(lvl))
-    return max(16, min(nqubits, 39))
+    # changed hard cap 39 -> dynamic cap
+    return max(16, min(nqubits, _current_peaked_max_cap()))
 
 # Peaked circuits
 
@@ -90,8 +193,8 @@ def build_peaked_challenge(
     rqc_mul = 150 * np.exp(-nqubits / 4) + 0.5
     rqc_depth = int(round(rqc_mul * nqubits))
 
-    gpu_id = int(os.getenv("VALIDATOR_GPU_ID", "0"))
-    timeout_s = float(os.getenv("VALIDATOR_GEN_TIMEOUT_S", "1000"))
+    gpu_id = _GPU_ID
+    timeout_s = _GEN_TIMEOUT_S
 
     with tempfile.TemporaryDirectory(prefix="peaked_gen_") as tmpdir:
         outdir = Path(tmpdir)
@@ -101,7 +204,7 @@ def build_peaked_challenge(
         metadata = None
         qasm = None
 
-        for attempt in range(3):
+        for attempt in range(2):
             attempt_seed = int(seed) if attempt == 0 else random.randrange(1 << 32)
             cmd = [
                 sys.executable,
@@ -125,13 +228,24 @@ def build_peaked_challenge(
                     timeout=timeout_s,
                 )
             except subprocess.TimeoutExpired:
-                bt.logging.warning(f"[peaked] attempt {attempt+1}/3 timed out (seed={attempt_seed})")
+                bt.logging.warning(f"[peaked] attempt {attempt+1}/2 timed out (seed={attempt_seed})")
                 time.sleep(2.0)
                 continue
             except Exception as e:
-                bt.logging.warning(f"[peaked] attempt {attempt+1}/3 failed to launch (seed={attempt_seed}): {e}")
+                bt.logging.warning(f"[peaked] attempt {attempt+1}/2 failed to launch (seed={attempt_seed}): {e}")
                 time.sleep(1.0)
                 continue
+
+            # turn worker's OOM exit into a signal upward
+            if proc.returncode == 99:
+                try: _kill_gen_worker()
+                except Exception: pass
+                try: _clear_memory()
+                except Exception: pass
+                time.sleep(1.0)
+                bt.logging.error(f"[peaked] OOM in worker (seed={attempt_seed}); stderr=\n{(proc.stderr or '')[:800]}")
+                _register_peaked_oom_and_maybe_lower_cap()
+                raise ValidatorOOMError("GPU OOM in peaked circuit worker")
 
             if proc.returncode != 0:
                 tail = ""
@@ -143,7 +257,7 @@ def build_peaked_challenge(
                 except Exception:
                     pass
                 bt.logging.warning(
-                    f"[peaked] attempt {attempt+1}/3 failed rc={proc.returncode} (seed={attempt_seed}); stderr=\n{(proc.stderr or '')[:800]}\nlog_tail=\n{tail}"
+                    f"[peaked] attempt {attempt+1}/2 failed rc={proc.returncode} (seed={attempt_seed}); stderr=\n{(proc.stderr or '')[:800]}\nlog_tail=\n{tail}"
                 )
                 time.sleep(1.0)
                 continue
@@ -162,25 +276,25 @@ def build_peaked_challenge(
                 metas = list(outdir.glob("*_metadata.json"))
                 meta_fp = metas[0] if metas else None
             if not meta_fp:
-                bt.logging.warning(f"[peaked] attempt {attempt+1}/3 produced no metadata (seed={attempt_seed})")
-                time.sleep(1.0)
+                bt.logging.warning(f"[peaked] attempt {attempt+1}/2 produced no metadata (seed={attempt_seed})")
+                time.sleep(2.0)
                 continue
 
             try:
                 metadata = json.loads(Path(meta_fp).read_text())
             except Exception:
-                bt.logging.warning(f"[peaked] attempt {attempt+1}/3 could not parse metadata (seed={attempt_seed})")
+                bt.logging.warning(f"[peaked] attempt {attempt+1}/2 could not parse metadata (seed={attempt_seed})")
                 time.sleep(0.5)
                 continue
             qasm_file = outdir / metadata.get("qasm_filename", "")
             if not qasm_file.exists():
-                bt.logging.warning(f"[peaked] attempt {attempt+1}/3 missing qasm file (seed={attempt_seed})")
+                bt.logging.warning(f"[peaked] attempt {attempt+1}/2 missing qasm file (seed={attempt_seed})")
                 time.sleep(0.5)
                 continue
             try:
                 qasm = qasm_file.read_text()
             except Exception:
-                bt.logging.warning(f"[peaked] attempt {attempt+1}/3 failed to read qasm (seed={attempt_seed})")
+                bt.logging.warning(f"[peaked] attempt {attempt+1}/2 failed to read qasm (seed={attempt_seed})")
                 time.sleep(0.5)
                 continue
 
@@ -267,7 +381,7 @@ def _params_from_difficulty(level: float) -> Tuple[int, int]:
     """
     nqubits = int(round(level))
     # Cap at 39 qubits
-    nqubits = max(16, min(nqubits, 39))
+    nqubits = max(16, min(nqubits, _current_peaked_max_cap()))
     rqc_mul = 150 * np.exp(-nqubits / 4) + 0.5
     rqc_depth = int(round(rqc_mul * nqubits))
     return nqubits, rqc_depth

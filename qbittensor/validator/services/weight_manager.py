@@ -75,6 +75,15 @@ class WeightManager:
                 bt.logging.warning("No live miners matched the scored hotkeys")
                 return
 
+            # raw scoring snapshot
+            try:
+                total_raw_score = float(sum(uid_scores.values()))
+                bt.logging.trace(f"[weights] raw_score_total={total_raw_score:.6f} miners_scored={len(uid_scores)}")
+                for u, s in sorted(uid_scores.items(), key=lambda kv: kv[1], reverse=True):
+                    bt.logging.trace(f"[weights] raw_score uid={u} hotkey={m.hotkeys[u]} score={s:.8f}")
+            except Exception:
+                pass
+
             weights = torch.zeros(len(m.uids))
             for uid_, score in uid_scores.items():
                 weights[uid_] = max(MIN_WEIGHT, score)
@@ -92,6 +101,15 @@ class WeightManager:
 
                 # Add the fixed 10% to the miner incentive pool UID
                 weights[MINER_POOL_UID] += special_weight
+
+                # log post-normalization incentives (after pool split)
+                try:
+                    active = (weights > 0).nonzero(as_tuple=False).flatten().tolist()
+                    bt.logging.trace(f"[weights] post_norm_active_miners={len(active)}")
+                    for u in active:
+                        bt.logging.trace(f"[weights] incentive uid={u} hotkey={m.hotkeys[u]} weight={weights[u].item():.8f}")
+                except Exception:
+                    pass
 
             bt.logging.info(
                 f"Setting weights for { (weights > 0).sum().item() } miners"

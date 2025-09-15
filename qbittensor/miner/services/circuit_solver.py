@@ -4,6 +4,7 @@ import functools
 
 import bittensor as bt
 from qbittensor.miner.solver_worker import SolverWorker
+from qbittensor.protocol import _CircuitSynapseBase
 from qbittensor.miner.solvers.default_peaked_solver import DefaultPeakedSolver
 from qbittensor.miner.solvers.default_hstab_solver import DefaultHStabSolver
 
@@ -11,6 +12,10 @@ from qbittensor.miner.solvers.default_hstab_solver import DefaultHStabSolver
 def _execute_solve_in_process(qasm: str, circuit_type: str, solvers: dict) -> str:
     try:
         if circuit_type not in solvers:
+            return ""
+
+        # Handle None/empty qasm gracefully (difficulty queries)
+        if qasm is None or not qasm or qasm.strip() == "":
             return ""
 
         solution = solvers[circuit_type].solve(qasm)
@@ -83,7 +88,12 @@ class CircuitSolver:
             if circuit_type not in self._solvers:
                 bt.logging.error(f"Unknown circuit type: {circuit_type}. Skipping circuit.")
                 return ""
-            
+
+            # Handle None/empty qasm gracefully (difficulty queries)
+            if qasm is None or not qasm or qasm.strip() == "":
+                bt.logging.debug(f"Skipping empty QASM for {circuit_type} circuit (difficulty query)")
+                return ""
+
             bt.logging.info(f"Solving {circuit_type} circuit")
             result = self._solvers[circuit_type].solve(qasm)
             return self._check_solution(result, circuit_type)
@@ -98,7 +108,7 @@ class CircuitSolver:
             raise TypeError(f"Solver must return str, got {type(solution).__name__}")
         return solution
 
-    def submit(self, syn):
+    def submit(self, syn: _CircuitSynapseBase):
         self._worker.submit_synapse(syn)
 
     def drain(self, n=10, validator_hotkey=None):

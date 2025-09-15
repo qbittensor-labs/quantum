@@ -10,6 +10,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, NamedTuple, Tuple
+import math
 
 import bittensor as bt
 from qbittensor.validator.config.difficulty_config import DifficultyConfig
@@ -18,6 +19,7 @@ from qbittensor.validator.utils.challenge_utils import (
     build_hstab_challenge,
 )
 from qbittensor.validator.utils.validator_meta import ChallengeMeta
+from qbittensor.validator.utils.challenge_utils import ValidatorOOMError
 
 __all__ = ["ChallengeProducer", "QItem"]
 
@@ -180,11 +182,28 @@ class ChallengeProducer:
                     )
 
                     # peaked
-                    syn1, meta1, target1 = self._build_challenge_of_kind(uid, "peaked")
-                    self.queue.put_nowait(QItem(uid, syn1, meta1, target1, file_path=None))
-                    bt.logging.trace(
-                        f"[challenge-producer] queued {meta1.circuit_kind} for UID {uid}"
-                    )
+                    try:
+                        syn1, meta1, target1 = self._build_challenge_of_kind(uid, "peaked")
+                        self.queue.put_nowait(QItem(uid, syn1, meta1, target1, file_path=None))
+                        bt.logging.trace(
+                            f"[challenge-producer] queued {meta1.circuit_kind} for UID {uid}"
+                        )
+                    except ValidatorOOMError:
+                        self._pending_uid = uid
+                        self._pending_kind = "peaked"
+                        bt.logging.error("[challenge-producer] OOM during peaked build; resetting GPU and restarting validator")
+                        try:
+                            import os, sys
+                            gpu_id = int(os.getenv("VALIDATOR_GPU_ID", "0"))
+                            script = os.getenv("GPU_RESET_SCRIPT", "/root/quantum/gpu-reset-and-exec.sh")
+                            cmd = [script, sys.executable, *sys.argv]
+                            env = os.environ.copy()
+                            env["GPU_ID"] = str(gpu_id)
+                            os.execvpe(script, cmd, env)
+                        except Exception:
+                            import signal
+                            os.kill(os.getpid(), signal.SIGTERM)
+                        raise
 
                     if room_for_two:
                         # hstab
@@ -219,6 +238,14 @@ class ChallengeProducer:
         difficulty = difficulty_cfg.get(uid)
         if difficulty is None:
             difficulty = self._default_difficulty
+        # sanitize (reject NaN/Inf/negatives)
+        try:
+            dv = float(difficulty)
+        except Exception:
+            dv = self._default_difficulty
+        if not math.isfinite(dv) or dv < 0.0:
+            dv = self._default_difficulty
+        difficulty = dv
 
         cap = self._MAX_DIFFICULTY.get(kind)
         if cap is not None and difficulty > cap: # caps hstab at 50
@@ -254,3 +281,4 @@ class ChallengeProducer:
 
     def _cleanup_old_files(self) -> None:
         pass
+
