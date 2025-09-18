@@ -1,6 +1,7 @@
 import warnings
 from dataclasses import dataclass
 import time
+import os
 
 import bittensor as bt
 import cotengra as ctg
@@ -11,6 +12,10 @@ from torch import optim
 
 from qbittensor.validator.peaked_circuit_creation.lib.circuit import (
     SU4, PeakedCircuit)
+import multiprocessing
+from qbittensor.validator.peaked_circuit_creation.lib.obfuscate import (
+    obfuscate_su4_series,
+)
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 bt.logging.info(f"Using device: {DEVICE} (CUDA available: {torch.cuda.is_available()})")
@@ -108,6 +113,8 @@ def make_qmps(state: str, depth: int, start_layer: int) -> qtn.TensorNetwork:
         Qubit_ara=L - 1, rand=True, start_layer=start_layer
     )
     return psi
+def _leg_swap_4x4(M: np.ndarray) -> np.ndarray:
+    return M.reshape(2, 2, 2, 2).transpose(1, 0, 3, 2).reshape(4, 4)
 
 def find_lucky_seed_and_make_circuit(
     target_state: str,
@@ -209,7 +216,9 @@ class CircuitParams:
 
     @staticmethod
     def from_difficulty(level: float):
-        nqubits = int(12 + 10 * np.log2(level + 3.9))
+        safe = max(level + 3.9, 0.1)
+        nqubits = int(round(12 + 10 * np.log2(safe)))
+        nqubits = max(10, nqubits)
         rqc_mul = 150 * np.exp(-nqubits / 4) + 0.5
         rqc_depth = round(rqc_mul * nqubits)
         pqc_depth = max(1, nqubits // 5)
@@ -223,7 +232,8 @@ class CircuitParams:
         # of the circuit's random gates.
         gen = np.random.Generator(np.random.PCG64(seed))
         target_state = "".join("1" if gen.random() < 0.5 else "0" for _ in range(self.nqubits))
-        peaking_threshold = max(20, 10 ** (0.38 * self.difficulty + 2.102))
+        min_peak = float(os.getenv("QBT_MIN_PEAKING", "0"))
+        peaking_threshold = max(min_peak, 10 ** (0.38 * self.difficulty + 2.102))
 
         # The `seed` is now the `base_seed` for the search
         (rqc, pqc, peak_prob) = find_lucky_seed_and_make_circuit(
@@ -237,10 +247,16 @@ class CircuitParams:
         bt.logging.info(f"Total time for make_circuit: {make_circuit_time:.4f} seconds")
 
         start_conversion = time.perf_counter()
+        r_rev = os.getenv("QBT_NORM_RQC_REVERSE", "0").strip() == "1"
+        p_rev = os.getenv("QBT_NORM_PQC_REVERSE", "0").strip() == "1"
+
+        rqc_seq = list(reversed(rqc)) if r_rev else list(rqc)
+        pqc_seq = list(reversed(pqc)) if p_rev else list(pqc)
+
         unis = list()
         q0 = 0
         depth = 0
-        for tens in rqc:
+        for tens in rqc_seq:
             mat = tens.data.resolve_conj().cpu().numpy().reshape((4, 4))
             unis.append(SU4(q0, q0 + 1, mat))
             q0 += 2
@@ -249,7 +265,7 @@ class CircuitParams:
                 q0 = depth % 2
         dshift = (self.nqubits + self.pqc_depth + 1) % 2
         q1 = self.nqubits - 1 - (depth + dshift) % 2
-        for tens in pqc:
+        for tens in pqc_seq:
             mat = tens.data.resolve_conj().cpu().numpy().reshape((4, 4))
             unis.append(SU4(q1 - 1, q1, mat))
             q1 -= 2
@@ -259,4 +275,110 @@ class CircuitParams:
         conversion_time = time.perf_counter() - start_conversion
         bt.logging.info(f"Time for final conversion to SU4 (GPU->CPU): {conversion_time:.4f} seconds")
 
+        rng_obf = np.random.Generator(np.random.PCG64(seed ^ 0xC0FFEE))
+        flip_rate = 0.05 + 0.35 * float(rng_obf.random())
+        _prev_swap = os.environ.get("QBT_OBF_SWAP_RATE")
+        os.environ["QBT_OBF_SWAP_RATE"] = "0.0"
+        try:
+            target_state, unis = obfuscate_su4_series(
+                target_state=target_state,
+                unis=unis,
+                seed=seed,
+                flip_rate_override=flip_rate,
+                ensure_touch_all=True,
+            )
+        finally:
+            if _prev_swap is not None:
+                os.environ["QBT_OBF_SWAP_RATE"] = _prev_swap
+            else:
+                os.environ.pop("QBT_OBF_SWAP_RATE", None)
+
         return PeakedCircuit.from_su4_series(target_state, peak_prob, unis, seed)
+
+    def compute_circuits(self, seed: int, n_variants: int = 10) -> list[PeakedCircuit]:
+        """Generate multiple circuit variants from one optimization run.
+
+        Produces one original circuit plus (n_variants-1) obfuscated variants,
+        all derived from the same optimized 4x4 unitaries.
+        """
+        start_time = time.perf_counter()
+
+        gen = np.random.Generator(np.random.PCG64(seed))
+        target_state = "".join("1" if gen.random() < 0.5 else "0" for _ in range(self.nqubits))
+        min_peak = float(os.getenv("QBT_MIN_PEAKING", "0"))
+        peaking_threshold = max(min_peak, 10 ** (0.38 * self.difficulty + 2.102))
+
+        rqc, pqc, peak_prob = find_lucky_seed_and_make_circuit(
+            target_state,
+            self.rqc_depth,
+            self.pqc_depth,
+            base_seed=seed,
+            target_peaking=peaking_threshold,
+        )
+        make_circuit_time = time.perf_counter() - start_time
+        bt.logging.info(f"Total time for make_circuit (shared): {make_circuit_time:.4f} seconds")
+
+        start_conversion = time.perf_counter()
+
+        r_rev = os.getenv("QBT_NORM_RQC_REVERSE", "0").strip() == "1"
+        p_rev = os.getenv("QBT_NORM_PQC_REVERSE", "0").strip() == "1"
+
+        rqc_seq = list(reversed(rqc)) if r_rev else list(rqc)
+        pqc_seq = list(reversed(pqc)) if p_rev else list(pqc)
+
+        unis = list()
+        q0 = 0
+        depth = 0
+        for tens in rqc_seq:
+            mat = tens.data.resolve_conj().cpu().numpy().reshape((4, 4))
+            unis.append(SU4(q0, q0 + 1, mat))
+            q0 += 2
+            if q0 >= self.nqubits - 1:
+                depth += 1
+                q0 = depth % 2
+        dshift = (self.nqubits + self.pqc_depth + 1) % 2
+        q1 = self.nqubits - 1 - (depth + dshift) % 2
+        for tens in pqc_seq:
+            mat = tens.data.resolve_conj().cpu().numpy().reshape((4, 4))
+            unis.append(SU4(q1 - 1, q1, mat))
+            q1 -= 2
+            if q1 <= 0:
+                depth += 1
+                q1 = self.nqubits - 1 - (depth + dshift) % 2
+        conversion_time = time.perf_counter() - start_conversion
+        bt.logging.info(f"Time for final conversion to SU4 (GPU->CPU): {conversion_time:.4f} seconds")
+
+        def _pool_initializer():
+            import os as _os
+            _os.environ.setdefault('OMP_NUM_THREADS', '1')
+            _os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
+            _os.environ.setdefault('MKL_NUM_THREADS', '1')
+
+        circuits: list[PeakedCircuit] = []
+        with multiprocessing.Pool(initializer=_pool_initializer) as pool:
+            circuits.append(PeakedCircuit.from_su4_series(target_state, peak_prob, unis, seed, pool=pool))
+
+            total = max(1, int(n_variants))
+            for k in range(1, total):
+                unis_k = [SU4(u.target0, u.target1, u.mat.copy()) for u in unis]
+                salt = (seed ^ (k * 0x9E3779B1)) & 0xFFFFFFFF
+            rng_obf = np.random.Generator(np.random.PCG64(int(salt) ^ 0xC0FFEE))
+            flip_rate = 0.10 + 0.75 * float(rng_obf.random())
+            _prev_swap = os.environ.get("QBT_OBF_SWAP_RATE")
+            os.environ["QBT_OBF_SWAP_RATE"] = "0.0"
+            try:
+                targ_k, unis_k = obfuscate_su4_series(
+                    target_state=target_state,
+                    unis=unis_k,
+                    seed=int(salt),
+                    flip_rate_override=flip_rate,
+                    ensure_touch_all=True,
+                )
+            finally:
+                if _prev_swap is not None:
+                    os.environ["QBT_OBF_SWAP_RATE"] = _prev_swap
+                else:
+                    os.environ.pop("QBT_OBF_SWAP_RATE", None)
+                circuits.append(PeakedCircuit.from_su4_series(targ_k, peak_prob, unis_k, int(salt), pool=pool))
+
+        return circuits

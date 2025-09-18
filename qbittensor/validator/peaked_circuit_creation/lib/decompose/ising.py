@@ -166,7 +166,7 @@ def fidelity(
         ]
     """
     uni = make_uni(params)
-    return abs(np.diag(uni.T.conjugate() @ U_target).sum()) ** 2 / 16
+    return abs(np.vdot(uni, U_target)) ** 2 / 16.0
 
 def step(
     U_target: np.ndarray[complex, 2],
