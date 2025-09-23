@@ -34,7 +34,7 @@ def save_base_su4(
     mats = np.stack([u.mat for u in unis]).astype(np.complex128)
     targets = np.array([[u.target0, u.target1] for u in unis], dtype=np.int16)
     now = time.time()
-    ttl = float(os.getenv("QBT_BASE_CACHE_TTL_H", str(ttl_hours if ttl_hours is not None else 48)))
+    ttl = float(os.getenv("QBT_BASE_CACHE_TTL_H", str(ttl_hours if ttl_hours is not None else 8)))
     meta = {
         "nqubits": int(nqubits),
         "rqc_depth": int(rqc_depth),
