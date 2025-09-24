@@ -191,7 +191,7 @@ class ChallengeProducer:
                     except ValidatorOOMError:
                         self._pending_uid = uid
                         self._pending_kind = "peaked"
-                        bt.logging.error("[challenge-producer] OOM during peaked build; resetting GPU and restarting validator")
+                        bt.logging.error("[challenge-producer] OOM during peaked build; attempting GPU reset script if provided")
                         try:
                             import os, sys
                             gpu_id = int(os.getenv("VALIDATOR_GPU_ID", "0"))
@@ -199,11 +199,13 @@ class ChallengeProducer:
                             cmd = [script, sys.executable, *sys.argv]
                             env = os.environ.copy()
                             env["GPU_ID"] = str(gpu_id)
-                            os.execvpe(script, cmd, env)
-                        except Exception:
-                            import signal
-                            os.kill(os.getpid(), signal.SIGTERM)
-                        raise
+                            if script and os.path.exists(script):
+                                bt.logging.warning(f"[challenge-producer] executing GPU reset script: {script}")
+                                os.execvpe(script, cmd, env)
+                            else:
+                                bt.logging.warning(f"[challenge-producer] GPU reset script not found, skipping: {script}")
+                        except Exception as e:
+                            bt.logging.error(f"[challenge-producer] GPU reset script execution failed: {e}")
 
                     if room_for_two:
                         # hstab

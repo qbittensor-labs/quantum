@@ -2,6 +2,7 @@ from __future__ import annotations
 from abc import (abstractmethod, abstractstaticmethod)
 from dataclasses import dataclass
 import multiprocessing
+import os
 import random
 from typing import *
 import numpy as np
@@ -596,6 +597,7 @@ class PeakedCircuit:
         peak_prob: float,
         unis: list[SU4],
         seed: int,
+        pool: multiprocessing.pool.Pool | None = None,
     ):
         """
         Construct from a list of two-qubit unitaries, decomposing into ordinary
@@ -623,19 +625,23 @@ class PeakedCircuit:
 
         # this assumes every qubit is touched
         num_qubits = max(max(uni.target0, uni.target1) for uni in unis) + 1
-        with multiprocessing.Pool() as pool:
-            if choice == 0:
-                gates = [
-                    gate
-                    for subcirc in pool.map(_cnots_decomp, unis)
-                    for gate in subcirc
-                ]
-            else:
-                gates = [
-                    gate
-                    for subcirc in pool.map(_ising_decomp, unis)
-                    for gate in subcirc
-                ]
+
+        def _pool_initializer():
+            os.environ.setdefault('OMP_NUM_THREADS', '1')
+            os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
+            os.environ.setdefault('MKL_NUM_THREADS', '1')
+
+        def _map_with_pool(func, items):
+            if pool is not None:
+                return pool.map(func, items)
+            with multiprocessing.Pool(initializer=_pool_initializer) as local_pool:
+                return local_pool.map(func, items)
+
+        if choice == 0:
+            mapped = _map_with_pool(_cnots_decomp, unis)
+        else:
+            mapped = _map_with_pool(_ising_decomp, unis)
+        gates = [gate for subcirc in mapped for gate in subcirc]
 
         return PeakedCircuit(
             seed,

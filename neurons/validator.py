@@ -45,8 +45,9 @@ def _graceful_shutdown(signum, frame):
     except Exception:
         bt.logging.error("[validator] error during graceful shutdown", exc_info=True)
     finally:
-        # Exit non-zero so PM2 autorestart brings the process back up automatically
-        sys.exit(1)
+        # waiting causes hangs
+        import os as _os
+        _os._exit(1)
 
 
 # for GPU reset sequence

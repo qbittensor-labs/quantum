@@ -278,6 +278,16 @@ def shutdown(v: _ValidatorLike, timeout_s: float | None = None) -> None:
         bt.logging.warning("[shutdown] error stopping producer", exc_info=True)
 
     try:
+        q = getattr(v, "_queue", None)
+        if q is not None:
+            try:
+                while True:
+                    _ = q.get_nowait()
+            except Exception:
+                pass
+    except Exception:
+        pass
+    try:
         th = getattr(v, "_dispatcher_thread", None)
         if th and th.is_alive():
             th.join(timeout=5.0)

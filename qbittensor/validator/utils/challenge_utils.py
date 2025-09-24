@@ -31,6 +31,7 @@ from qbittensor.validator.peaked_circuit_creation.quimb_cache_utils import (
 from qbittensor.validator.hidden_stabilizers_creation.lib.circuit_gen import HStabCircuit
 
 from qbittensor.validator.utils.validator_meta import ChallengeMeta
+from qbittensor.validator.services.circuit_cache import GLOBAL_CIRCUIT_POOL
 from qbittensor.validator.utils.crypto_utils import canonical_hash
 
 __all__ = [
@@ -196,138 +197,148 @@ def build_peaked_challenge(
     gpu_id = _GPU_ID
     timeout_s = _GEN_TIMEOUT_S
 
-    with tempfile.TemporaryDirectory(prefix="peaked_gen_") as tmpdir:
-        outdir = Path(tmpdir)
-        worker_path = (Path(__file__).resolve().parents[1] / "services" / "gen_worker.py").resolve()
-
-        used_seed = None
-        metadata = None
-        qasm = None
-
-        for attempt in range(2):
-            attempt_seed = int(seed) if attempt == 0 else random.randrange(1 << 32)
-            cmd = [
-                sys.executable,
-                str(worker_path),
-                "--difficulty",
-                str(level),
-                "--seed",
-                str(attempt_seed),
-                "--gpu-id",
-                str(gpu_id),
-                "--output-dir",
-                str(outdir),
-            ]
-
-            try:
-                proc = subprocess.run(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    timeout=timeout_s,
-                )
-            except subprocess.TimeoutExpired:
-                bt.logging.warning(f"[peaked] attempt {attempt+1}/2 timed out (seed={attempt_seed})")
-                time.sleep(2.0)
-                continue
-            except Exception as e:
-                bt.logging.warning(f"[peaked] attempt {attempt+1}/2 failed to launch (seed={attempt_seed}): {e}")
-                time.sleep(1.0)
-                continue
-
-            # turn worker's OOM exit into a signal upward
-            if proc.returncode == 99:
-                try: _kill_gen_worker()
-                except Exception: pass
-                try: _clear_memory()
-                except Exception: pass
-                time.sleep(1.0)
-                bt.logging.error(f"[peaked] OOM in worker (seed={attempt_seed}); stderr=\n{(proc.stderr or '')[:800]}")
-                _register_peaked_oom_and_maybe_lower_cap()
-                raise ValidatorOOMError("GPU OOM in peaked circuit worker")
-
-            if proc.returncode != 0:
-                tail = ""
-                try:
-                    logs = sorted(outdir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
-                    if logs:
-                        data = logs[0].read_text()
-                        tail = data[-2000:]
-                except Exception:
-                    pass
-                bt.logging.warning(
-                    f"[peaked] attempt {attempt+1}/2 failed rc={proc.returncode} (seed={attempt_seed}); stderr=\n{(proc.stderr or '')[:800]}\nlog_tail=\n{tail}"
-                )
-                time.sleep(1.0)
-                continue
-
-            if proc.stdout:
-                try:
-                    _ = json.loads(proc.stdout.strip().splitlines()[-1])
-                except Exception:
-                    pass
-
-            meta_fp = None
-            for fp in outdir.glob(f"seed_{attempt_seed}_*_metadata.json"):
-                meta_fp = fp
-                break
-            if not meta_fp:
-                metas = list(outdir.glob("*_metadata.json"))
-                meta_fp = metas[0] if metas else None
-            if not meta_fp:
-                bt.logging.warning(f"[peaked] attempt {attempt+1}/2 produced no metadata (seed={attempt_seed})")
-                time.sleep(2.0)
-                continue
-
-            try:
-                metadata = json.loads(Path(meta_fp).read_text())
-            except Exception:
-                bt.logging.warning(f"[peaked] attempt {attempt+1}/2 could not parse metadata (seed={attempt_seed})")
-                time.sleep(0.5)
-                continue
-            qasm_file = outdir / metadata.get("qasm_filename", "")
-            if not qasm_file.exists():
-                bt.logging.warning(f"[peaked] attempt {attempt+1}/2 missing qasm file (seed={attempt_seed})")
-                time.sleep(0.5)
-                continue
-            try:
-                qasm = qasm_file.read_text()
-            except Exception:
-                bt.logging.warning(f"[peaked] attempt {attempt+1}/2 failed to read qasm (seed={attempt_seed})")
-                time.sleep(0.5)
-                continue
-
-            used_seed = attempt_seed
-            break
-
-        if metadata is None or qasm is None or used_seed is None:
-            bt.logging.error(f"[peaked] all attempts failed for nqubits={nqubits}")
-            raise RuntimeError("generation worker failed")
-
-        unsigned = {
-            "seed": int(metadata.get("seed", used_seed)),
-            "circuit_data": qasm,
-            "difficulty_level": float(nqubits),
-            "validator_hotkey": wallet.hotkey.ss58_address,
-            "nqubits": nqubits,
-            "rqc_depth": rqc_depth,
+    try:
+        art = GLOBAL_CIRCUIT_POOL.get(nqubits)
+        qasm = art.qasm
+        used_seed = int(art.seed)
+        rqc_depth = int(art.rqc_depth)
+        metadata = {
+            "seed": used_seed,
+            "qasm_filename": "",
+            "target_state": art.target_state,
         }
-        unsigned["challenge_id"] = canonical_hash(unsigned)
+    except Exception:
+        with tempfile.TemporaryDirectory(prefix="peaked_gen_") as tmpdir:
+            outdir = Path(tmpdir)
+            worker_path = (Path(__file__).resolve().parents[1] / "services" / "gen_worker.py").resolve()
 
-        syn = ChallengePeakedCircuit(**unsigned, validator_signature=None)
-        meta = ChallengeMeta(
-            challenge_id=unsigned["challenge_id"],
-            circuit_kind="peaked",
-            difficulty=float(nqubits),
-            validator_hotkey=wallet.hotkey.ss58_address,
-            entanglement_entropy=0.0,
-            nqubits=nqubits,
-            rqc_depth=rqc_depth,
-        )
+            used_seed = None
+            metadata = None
+            qasm = None
 
-        target_state = metadata.get("target_state", "")
-        return syn, meta, target_state
+            for attempt in range(2):
+                attempt_seed = int(seed) if attempt == 0 else random.randrange(1 << 32)
+                cmd = [
+                    sys.executable,
+                    str(worker_path),
+                    "--difficulty",
+                    str(level),
+                    "--seed",
+                    str(attempt_seed),
+                    "--gpu-id",
+                    str(gpu_id),
+                    "--output-dir",
+                    str(outdir),
+                ]
+
+                try:
+                    proc = subprocess.run(
+                        cmd,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        timeout=timeout_s,
+                    )
+                except subprocess.TimeoutExpired:
+                    bt.logging.warning(f"[peaked] attempt {attempt+1}/2 timed out (seed={attempt_seed})")
+                    time.sleep(2.0)
+                    continue
+                except Exception as e:
+                    bt.logging.warning(f"[peaked] attempt {attempt+1}/2 failed to launch (seed={attempt_seed}): {e}")
+                    time.sleep(1.0)
+                    continue
+
+                if proc.returncode == 99:
+                    try: _kill_gen_worker()
+                    except Exception: pass
+                    try: _clear_memory()
+                    except Exception: pass
+                    time.sleep(1.0)
+                    bt.logging.error(f"[peaked] OOM in worker (seed={attempt_seed}); stderr=\n{(proc.stderr or '')[:800]}")
+                    _register_peaked_oom_and_maybe_lower_cap()
+                    raise ValidatorOOMError("GPU OOM in peaked circuit worker")
+
+                if proc.returncode != 0:
+                    tail = ""
+                    try:
+                        logs = sorted(outdir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+                        if logs:
+                            data = logs[0].read_text()
+                            tail = data[-2000:]
+                    except Exception:
+                        pass
+                    bt.logging.warning(
+                        f"[peaked] attempt {attempt+1}/2 failed rc={proc.returncode} (seed={attempt_seed}); stderr=\n{(proc.stderr or '')[:800]}\nlog_tail=\n{tail}"
+                    )
+                    time.sleep(1.0)
+                    continue
+
+                if proc.stdout:
+                    try:
+                        _ = json.loads(proc.stdout.strip().splitlines()[-1])
+                    except Exception:
+                        pass
+
+                meta_fp = None
+                for fp in outdir.glob(f"seed_{attempt_seed}_*_metadata.json"):
+                    meta_fp = fp
+                    break
+                if not meta_fp:
+                    metas = list(outdir.glob("*_metadata.json"))
+                    meta_fp = metas[0] if metas else None
+                if not meta_fp:
+                    bt.logging.warning(f"[peaked] attempt {attempt+1}/2 produced no metadata (seed={attempt_seed})")
+                    time.sleep(2.0)
+                    continue
+
+                try:
+                    metadata = json.loads(Path(meta_fp).read_text())
+                except Exception:
+                    bt.logging.warning(f"[peaked] attempt {attempt+1}/2 could not parse metadata (seed={attempt_seed})")
+                    time.sleep(0.5)
+                    continue
+                qasm_file = outdir / metadata.get("qasm_filename", "")
+                if not qasm_file.exists():
+                    bt.logging.warning(f"[peaked] attempt {attempt+1}/2 missing qasm file (seed={attempt_seed})")
+                    time.sleep(0.5)
+                    continue
+                try:
+                    qasm = qasm_file.read_text()
+                except Exception:
+                    bt.logging.warning(f"[peaked] attempt {attempt+1}/2 failed to read qasm (seed={attempt_seed})")
+                    time.sleep(0.5)
+                    continue
+
+                used_seed = attempt_seed
+                break
+
+            if metadata is None or qasm is None or used_seed is None:
+                bt.logging.error(f"[peaked] all attempts failed for nqubits={nqubits}")
+                raise RuntimeError("generation worker failed")
+
+    unsigned = {
+        "seed": int(metadata.get("seed", used_seed)),
+        "circuit_data": qasm,
+        "difficulty_level": float(nqubits),
+        "validator_hotkey": wallet.hotkey.ss58_address,
+        "nqubits": nqubits,
+        "rqc_depth": rqc_depth,
+    }
+    unsigned["challenge_id"] = canonical_hash(unsigned)
+
+    syn = ChallengePeakedCircuit(**unsigned, validator_signature=None)
+    meta = ChallengeMeta(
+        challenge_id=unsigned["challenge_id"],
+        circuit_kind="peaked",
+        difficulty=float(nqubits),
+        validator_hotkey=wallet.hotkey.ss58_address,
+        entanglement_entropy=0.0,
+        nqubits=nqubits,
+        rqc_depth=rqc_depth,
+    )
+
+    target_state = metadata.get("target_state", "")
+    return syn, meta, target_state
 
 
 # Hidden Stabiliser circuits
