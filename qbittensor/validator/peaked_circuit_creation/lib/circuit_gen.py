@@ -425,12 +425,16 @@ class CircuitParams:
 
         def _pool_initializer():
             import os as _os
+            import signal as _signal
             _os.environ.setdefault('OMP_NUM_THREADS', '1')
             _os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
             _os.environ.setdefault('MKL_NUM_THREADS', '1')
+            _signal.signal(_signal.SIGTERM, _signal.SIG_IGN)
 
         circuits: list[PeakedCircuit] = []
-        with multiprocessing.Pool(initializer=_pool_initializer) as pool:
+        pool = None
+        try:
+            pool = multiprocessing.Pool(initializer=_pool_initializer)
             circuits.append(PeakedCircuit.from_su4_series(target_state, peak_prob, unis, seed, pool=pool))
 
             total = max(1, int(n_variants))
@@ -445,6 +449,11 @@ class CircuitParams:
                     pool=pool,
                 )
             )
+        finally:
+            if pool is not None:
+                pool.close()
+                pool.join()
+                pool.terminate()
 
         try:
             save_base_su4(
