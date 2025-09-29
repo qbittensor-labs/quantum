@@ -88,6 +88,36 @@ def load_base_su4(
         return None
 
 
+def find_any_cached_su4( *,nqubits: int,rqc_depth: int,pqc_depth: int,) -> Optional[Tuple[str, List[SU4], float]]:
+    try:
+        for p in CACHE_DIR.glob(f"nq{int(nqubits)}_r{int(rqc_depth)}_p{int(pqc_depth)}_seed*.npz"):
+            try:
+                data = np.load(p, allow_pickle=True)
+                meta = json.loads(str(data["meta"]))
+
+                if time.time() > float(meta.get("expires_ts", 0)):
+                    continue
+
+                target_state = str(data["target_state"])  # np.str_ -> str
+                mats = data["unis_mat"]
+                targets = data["targets"]
+                
+                unis: List[SU4] = [
+                    SU4(int(t[0]), int(t[1]), mats[i]) for i, t in enumerate(targets)
+                ]
+                peak_prob = float(meta.get("peak_prob", 0.0))
+
+                return target_state, unis, peak_prob
+            
+            except Exception:
+                continue
+
+    except Exception:
+        return None
+
+    return None
+
+
 def prune_expired() -> int:
     removed = 0
     now = time.time()
