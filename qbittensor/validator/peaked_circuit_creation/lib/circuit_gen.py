@@ -377,18 +377,41 @@ class CircuitParams:
         if any_cached is not None:
             target_state, unis, peak_prob = any_cached
             circuits: list[PeakedCircuit] = []
-            circuits.append(PeakedCircuit.from_su4_series(target_state, peak_prob, unis, seed))
-            total = max(1, int(n_variants))
-            circuits.extend(
-                _generate_obfuscated_variants(
-                    target_state=target_state,
-                    base_unis=unis,
-                    peak_prob=peak_prob,
-                    seed=seed,
-                    total=total,
-                    ensure_touch_all=True,
+
+            def _pool_initializer():
+                import os as _os
+                import signal as _signal
+                _os.environ.setdefault('OMP_NUM_THREADS', '1')
+                _os.environ.setdefault('OPENBLAS_NUM_THREADS', '1')
+                _os.environ.setdefault('MKL_NUM_THREADS', '1')
+                _signal.signal(_signal.SIGTERM, _signal.SIG_IGN)
+
+            pool = None
+            try:
+                pool = multiprocessing.Pool(initializer=_pool_initializer)
+                circuits.append(
+                    PeakedCircuit.from_su4_series(target_state, peak_prob, unis, seed, pool=pool)
                 )
-            )
+                total = max(1, int(n_variants))
+                circuits.extend(
+                    _generate_obfuscated_variants(
+                        target_state=target_state,
+                        base_unis=unis,
+                        peak_prob=peak_prob,
+                        seed=seed,
+                        total=total,
+                        ensure_touch_all=True,
+                        pool=pool,
+                    )
+                )
+            finally:
+                if pool is not None:
+                    try:
+                        pool.close()
+                        pool.join()
+                        pool.terminate()
+                    except Exception:
+                        pass
             return circuits
 
         gen = np.random.Generator(np.random.PCG64(seed))
