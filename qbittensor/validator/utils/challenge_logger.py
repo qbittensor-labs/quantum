@@ -241,8 +241,16 @@ def log_certificate_as_solution(cert: Certificate, miner_hotkey: str) -> bool:
     # direct sqlite3 so we can measure changes()
     import sqlite3, datetime as _dt
 
-    conn = sqlite3.connect(_DB_PATH)
+    conn = sqlite3.connect(_DB_PATH, timeout=30.0)
     try:
+        try:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA synchronous=NORMAL;")
+            conn.execute("PRAGMA temp_store=MEMORY;")
+            conn.execute("PRAGMA cache_size=10000;")
+            conn.execute("PRAGMA busy_timeout=30000;")
+        except Exception:
+            pass
         before = conn.total_changes  # snapshot
         conn.execute(
             _INSERT_CERT_AS_SOLUTION_SQL,
