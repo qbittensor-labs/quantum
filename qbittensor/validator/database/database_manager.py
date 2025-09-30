@@ -31,8 +31,15 @@ class DatabaseManager:
             self.close()
 
         try:
-            # Connect to the SQLite database. If the file doesn't exist, it will be created.
-            self.conn = sqlite3.connect(self.db_path)
+            self.conn = sqlite3.connect(self.db_path, timeout=30.0)
+            try:
+                self.conn.execute("PRAGMA journal_mode=WAL;")
+                self.conn.execute("PRAGMA synchronous=NORMAL;")
+                self.conn.execute("PRAGMA temp_store=MEMORY;")
+                self.conn.execute("PRAGMA cache_size=10000;")
+                self.conn.execute("PRAGMA busy_timeout=30000;")
+            except Exception:
+                pass
             # Row factory to return rows as sqlite3.Row objects (access by column name)
             self.conn.row_factory = sqlite3.Row
             self.cursor = self.conn.cursor()  # Get a cursor object to execute SQL commands

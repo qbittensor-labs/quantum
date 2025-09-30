@@ -118,7 +118,15 @@ class SolutionProcessor:
 
     def highest_correct_difficulty(self, uid: int, circuit_type: str) -> float | None:
         uid = as_int_uid(uid)
-        with sqlite3.connect(self._db_path) as conn:
+        with sqlite3.connect(self._db_path, timeout=30.0) as conn:
+            try:
+                conn.execute("PRAGMA journal_mode=WAL;")
+                conn.execute("PRAGMA synchronous=NORMAL;")
+                conn.execute("PRAGMA temp_store=MEMORY;")
+                conn.execute("PRAGMA cache_size=10000;")
+                conn.execute("PRAGMA busy_timeout=30000;")
+            except Exception:
+                pass
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 """
@@ -173,7 +181,15 @@ class SolutionProcessor:
         return ok
 
     def _challenge_row(self, cid: str) -> Optional[sqlite3.Row]:
-        with sqlite3.connect(self._db_path) as conn:
+        with sqlite3.connect(self._db_path, timeout=30.0) as conn:
+            try:
+                conn.execute("PRAGMA journal_mode=WAL;")
+                conn.execute("PRAGMA synchronous=NORMAL;")
+                conn.execute("PRAGMA temp_store=MEMORY;")
+                conn.execute("PRAGMA cache_size=10000;")
+                conn.execute("PRAGMA busy_timeout=30000;")
+            except Exception:
+                pass
             conn.row_factory = sqlite3.Row
             return conn.execute(
                 "SELECT * FROM challenges WHERE challenge_id = ? LIMIT 1",

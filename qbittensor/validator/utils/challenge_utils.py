@@ -44,12 +44,12 @@ class ValidatorOOMError(RuntimeError):
     pass
 
 # dynamic cap state
-_PEAKED_CAP_DEFAULT = 41
+_PEAKED_CAP_DEFAULT = 39
 _PEAKED_CAP_MIN = 16
 _RUN_DIR = Path.cwd()
 _PEAKED_CAP_FILE = _RUN_DIR / "validator_peaked_max_cap"
 _PEAKED_OOM_COUNT_FILE = _RUN_DIR / "validator_peaked_oom_count"
-_PEAKED_OOMS_PER_STEP = 3
+_PEAKED_OOMS_PER_STEP = 4
 
 # local runtime knobs
 _GPU_RESET_ON_OOM = True
