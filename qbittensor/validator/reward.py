@@ -62,6 +62,7 @@ class ScoringManager:
         self.weight_peaked = 0.8
         self.weight_hstab = 0.2
         self.hstab_exp = 2.0
+        self.min_registration_age_hours = 3.0  # do not score miners younger than this threshold
 
         bt.logging.info("ScoringManager initialized")
 
@@ -219,6 +220,35 @@ class ScoringManager:
         db = DatabaseManager(self.database_path)
         db.connect()
         try:
+            # Determine which miners are eligible based on registration age (>= threshold)
+            eligible_hotkeys = None
+            try:
+                reg_rows = db.fetch_all(
+                    """
+                    SELECT hotkey, time_first_seen
+                    FROM   registration_time
+                    """
+                )
+                if reg_rows:
+                    eligible_hotkeys = set()
+                    for r in reg_rows:
+                        hk = (r["hotkey"] or "").strip()
+                        ts_raw = r["time_first_seen"]
+                        if not hk or not ts_raw:
+                            continue
+                        try:
+                            ts = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+                            if ts.tzinfo is None:
+                                ts = ts.replace(tzinfo=timezone.utc)
+                        except Exception:
+                            continue
+                        age_h = (current_time - ts.astimezone(timezone.utc)).total_seconds() / 3600.0
+                        if age_h >= self.min_registration_age_hours:
+                            eligible_hotkeys.add(hk)
+
+            except Exception:
+                eligible_hotkeys = None
+
             rows_peaked = db.fetch_all(
                 """
                 SELECT s.miner_hotkey, s.entanglement_entropy, s.nqubits,
@@ -250,6 +280,9 @@ class ScoringManager:
                 hk = (row["miner_hotkey"] or "").strip()
                 if not hk:
                     continue
+                # Registration-age gating
+                if eligible_hotkeys is not None and hk not in eligible_hotkeys:
+                    continue
                 entropy = 0.0
                 nqubits = row["nqubits"]
                 is_correct = row["correct_solution"] == 1
@@ -268,6 +301,9 @@ class ScoringManager:
             for row in rows_hstab:
                 hk = (row["miner_hotkey"] or "").strip()
                 if not hk:
+                    continue
+                # Registration-age gating
+                if eligible_hotkeys is not None and hk not in eligible_hotkeys:
                     continue
                 nqubits = row["nqubits"]
                 is_correct = row["correct_solution"] == 1
