@@ -22,6 +22,11 @@ from qbittensor.validator.services.solution_processor import SolutionProcessor
 from qbittensor.validator.services.weight_manager import WeightManager
 from qbittensor.validator.services.certificate_manager import CertificateManager
 from qbittensor.validator.utils.whitelist import load_whitelist
+from qbittensor.validator.utils.registration_tracker import (
+    initialize_registration_table,
+    register_miner_if_new,
+    check_hotkey_changed,
+)
 from qbittensor.validator.database.fixups import apply_fixups 
 from qbittensor.protocol import ChallengePeakedCircuit, ChallengeHStabCircuit
 
@@ -92,6 +97,9 @@ def _bootstrap(v: _ValidatorLike) -> None:
     db_dir = Path(__file__).parent / "database"
     db_dir.mkdir(exist_ok=True)
     db_path = db_dir / "validator_data.db"
+    
+    # Store db_path for registration tracking
+    v._db_path = db_path
 
     apply_fixups(db_path)
 
@@ -113,6 +121,9 @@ def _bootstrap(v: _ValidatorLike) -> None:
     v._sol_proc  = SolutionProcessor(cert_issuer=v.certificate_issuer)
     v._scoring_mgr = ScoringManager(str(db_path))
     v._weight_mgr  = WeightManager(v)
+
+    # Initialize registration table with all current miners (first run only)
+    initialize_registration_table(db_path, v.metagraph)
 
     from qbittensor.validator.services.challenge_producer import ChallengeProducer
     v._producer = ChallengeProducer(
@@ -199,12 +210,24 @@ def _refresh_uid_deps(v: _ValidatorLike) -> None:
     v.metagraph.sync()
 
     live = {u for u in v.metagraph.uids if v.metagraph.axons[u].ip not in ("0.0.0.0", "", None) and v.metagraph.axons[u].port != 0}
+    
+    # Track hotkey changes and register new miners
     for uid, hk in enumerate(v.metagraph.hotkeys):
         if uid not in live:
             continue
+        
         prev = v._hotkey_cache.get(uid)
+        
+        # If we have cached hotkey and it changed, register the new miner
         if prev and prev != hk:
-            bt.logging.info(f"UID {uid} reassigned {prev} - {hk}")
+            bt.logging.info(f"UID {uid} reassigned {prev} -> {hk}")
+            register_miner_if_new(v._db_path, uid, hk)
+        # If no cache (first run or new UID), check database to avoid overwriting existing records
+        elif prev is None:
+            if check_hotkey_changed(v._db_path, uid, hk):
+                bt.logging.info(f"UID {uid} new or changed hotkey detected")
+                register_miner_if_new(v._db_path, uid, hk)
+    
     v._hotkey_cache = {uid: hk for uid, hk in enumerate(v.metagraph.hotkeys)}
 
     final_uids = sorted(live)

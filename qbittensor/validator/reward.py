@@ -109,8 +109,44 @@ class ScoringManager:
             db.execute_query(create_score_history_table)
             bt.logging.info("[scoring] Ensured 'score_history' table exists.")
 
+            create_registration_time_table = """
+            CREATE TABLE IF NOT EXISTS registration_time (
+                uid INTEGER PRIMARY KEY,
+                hotkey TEXT NOT NULL,
+                time_first_seen TEXT NOT NULL
+            );
+            """
+            db.execute_query(create_registration_time_table)
+            bt.logging.info("[scoring] Ensured 'registration_time' table exists.")
+
         except sqlite3.Error as e:
             bt.logging.error(f"[scoring] Database error during table setup: {e}")
+        finally:
+            db.close()
+
+    def get_miner_registration_time(self, hotkey: str) -> datetime | None:
+        """
+        Get the registration time for a miner by hotkey.
+        
+        Parameters:
+        - hotkey: The miner's hotkey
+        
+        Returns:
+        - datetime object of when the miner was first seen, or None if not found
+        """
+        db = DatabaseManager(self.database_path)
+        db.connect()
+        try:
+            result = db.fetch_one(
+                "SELECT time_first_seen FROM registration_time WHERE hotkey = ?",
+                (hotkey,)
+            )
+            if result:
+                return datetime.fromisoformat(result["time_first_seen"]).replace(tzinfo=timezone.utc)
+            return None
+        except sqlite3.Error as e:
+            bt.logging.error(f"[scoring] Database error getting registration time: {e}")
+            return None
         finally:
             db.close()
 
@@ -170,7 +206,11 @@ class ScoringManager:
         _, _, combined_score = self.calculate_combined_score(0.0, nqubits)
         return combined_score
 
-    def calculate_decayed_scores(self, lookback_days: int = 2) -> Dict[int, float]:
+    def calculate_decayed_scores(self, lookback_days: float = 1.5) -> Dict[int, float]:
+        """
+        Calculate decayed scores for miners over the lookback period
+        Applies a time-based adjustment for miners registered less than the lookback period.
+        """
         current_time = datetime.now(timezone.utc)
         cutoff_time = current_time - timedelta(days=lookback_days)
         decay_const = math.log(2) / self.half_life_hours  # same half‑life
@@ -262,7 +302,31 @@ class ScoringManager:
         else:
             combined = {hk: 0.0 for hk, val in combined.items()}
 
-        return dict(combined)
+        # Apply time-based adjustment for miners registered less than the lookback period
+        # Score is divided by (time_registered / scoring_period) to normalize per-hour contribution
+        lookback_hours = lookback_days * 24.0
+        adjusted_combined = {}
+        for hk, score in combined.items():
+            registration_time = self.get_miner_registration_time(hk)
+            if registration_time:
+                time_registered_hours = (current_time - registration_time).total_seconds() / 3600.0
+                if time_registered_hours < lookback_hours:
+                    # Divide score by (time_registered / scoring_period)
+                    # Example: 18h registered -> score / (18/36) = score / 0.5 = score * 2
+                    time_ratio = time_registered_hours / lookback_hours
+                    adjusted_score = score / time_ratio if time_ratio > 0 else 0.0
+                    adjusted_combined[hk] = adjusted_score
+                    bt.logging.debug(
+                        f"[scoring] Applied time adjustment for {hk}: "
+                        f"registered {time_registered_hours:.1f}h ago, multiplier {1/time_ratio:.2f}x"
+                    )
+                else:
+                    adjusted_combined[hk] = score
+            else:
+                # No registration time found, use full score
+                adjusted_combined[hk] = score
+
+        return dict(adjusted_combined)
 
     def update_daily_score_history(self) -> None:
         """

@@ -16,7 +16,7 @@ SCORING_INTERVAL = 15 * 60 # every 15 min
 WEIGHT_SETTING_INTERVAL = 30 * 60 # every 30 min
 MIN_WEIGHT = 0.0001 # floor weight for active miners
 MINER_POOL_UID = 235
-MINER_POOL_SHARE = 0.1
+MINER_POOL_SHARE = 0.15
 
 
 class WeightManager:
