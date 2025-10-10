@@ -60,16 +60,19 @@ class WeightManager:
             except ValueError:
                 bt.logging.warning("Hotkey not found in metagraph")
                 return # still update timestamp below
+            
+            # Build current hotkey to UID mapping from metagraph
+            m = self.validator.metagraph
+            hk_to_uid = {m.hotkeys[u]: u for u in m.uids if m.axons[u].is_serving}
 
             scores = self.validator._scoring_mgr.calculate_decayed_scores(
-                lookback_days=2
+                lookback_days=1.5,
+                hk_to_uid=hk_to_uid
             )
             if not scores:
                 bt.logging.warning("No scores available for weight calculation")
                 return # still update timestamp below
 
-            m = self.validator.metagraph
-            hk_to_uid = {m.hotkeys[u]: u for u in m.uids if m.axons[u].is_serving}
             uid_scores = {hk_to_uid[hk]: float(s) for hk, s in scores.items() if hk in hk_to_uid}
             if not uid_scores:
                 bt.logging.warning("No live miners matched the scored hotkeys")
