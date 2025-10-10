@@ -62,7 +62,7 @@ class ScoringManager:
         self.weight_peaked = 0.8
         self.weight_hstab = 0.2
         self.hstab_exp = 2.0
-        self.min_registration_age_hours = 3.0  # do not score miners younger than this threshold
+        self.min_registration_age_hours = 6.0  # do not score miners younger than this threshold
 
         bt.logging.info("ScoringManager initialized")
 
