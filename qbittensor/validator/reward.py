@@ -207,7 +207,7 @@ class ScoringManager:
         _, _, combined_score = self.calculate_combined_score(0.0, nqubits)
         return combined_score
 
-    def calculate_decayed_scores(self, lookback_days: float = 1.5) -> Dict[int, float]:
+    def calculate_decayed_scores(self, lookback_days: float = 1.5, hk_to_uid: dict[str, int] | None = None) -> Dict[str, float]:
         """
         Calculate decayed scores for miners over the lookback period
         Applies a time-based adjustment for miners registered less than the lookback period.
@@ -251,7 +251,7 @@ class ScoringManager:
 
             rows_peaked = db.fetch_all(
                 """
-                SELECT s.miner_hotkey, s.entanglement_entropy, s.nqubits,
+                SELECT s.miner_hotkey, s.miner_uid, s.entanglement_entropy, s.nqubits,
                        s.time_received, s.correct_solution
                 FROM   solutions s
                 JOIN   challenges c ON c.challenge_id = s.challenge_id
@@ -264,7 +264,7 @@ class ScoringManager:
 
             rows_hstab = db.fetch_all(
                 """
-                SELECT s.miner_hotkey, s.nqubits,
+                SELECT s.miner_hotkey, s.miner_uid, s.nqubits,
                        s.time_received, s.correct_solution
                 FROM   solutions s
                 JOIN   challenges c ON c.challenge_id = s.challenge_id
@@ -280,6 +280,13 @@ class ScoringManager:
                 hk = (row["miner_hotkey"] or "").strip()
                 if not hk:
                     continue
+                # Check if UID matches current UID
+                if hk_to_uid is not None:
+                    current_uid = hk_to_uid.get(hk)
+                    if current_uid is None:
+                        continue
+                    if row["miner_uid"] != current_uid:
+                        continue  # skip old scores from previous UID
                 # Registration-age gating
                 if eligible_hotkeys is not None and hk not in eligible_hotkeys:
                     continue
@@ -305,6 +312,14 @@ class ScoringManager:
                 # Registration-age gating
                 if eligible_hotkeys is not None and hk not in eligible_hotkeys:
                     continue
+                # Check if UID matches current UID
+                if hk_to_uid is not None:
+                    current_uid = hk_to_uid.get(hk)
+                    if current_uid is None:
+                        continue
+                    if row["miner_uid"] != current_uid:
+                        continue  # skip old scores from previous UID
+
                 nqubits = row["nqubits"]
                 is_correct = row["correct_solution"] == 1
                 ts = datetime.fromisoformat(row["time_received"]).replace(
