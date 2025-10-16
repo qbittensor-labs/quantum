@@ -7,36 +7,31 @@ from __future__ import annotations
 import random
 import time
 import hashlib
-from typing import Iterable, Tuple
+from typing import Tuple
 import subprocess
 import tempfile
 import json
-import os
 from pathlib import Path
 import gc
 import sys
 import numpy as np
 
 import bittensor as bt
-import stim
 
 from qbittensor.protocol import (
     ChallengePeakedCircuit,
-    ChallengeHStabCircuit,
+    ChallengeShorsCircuit,
 )
-from qbittensor.validator.hidden_stabilizers_creation.lib import make_gen
 from qbittensor.validator.peaked_circuit_creation.quimb_cache_utils import (
     clear_all_quimb_caches,
 )
-from qbittensor.validator.hidden_stabilizers_creation.lib.circuit_gen import HStabCircuit
 
 from qbittensor.validator.utils.validator_meta import ChallengeMeta
-from qbittensor.validator.services.circuit_cache import GLOBAL_CIRCUIT_POOL
 from qbittensor.validator.utils.crypto_utils import canonical_hash
 
 __all__ = [
     "build_peaked_challenge",
-    "build_hstab_challenge",
+    "build_shors_challenge",
 ]
 
 # clear error type surfaced to the validator loop
@@ -169,7 +164,7 @@ def _convert_peaked_difficulty_to_qubits(level: float) -> int:
         nqubits = int(12 + 10 * np.log2(lvl + 3.9))
     else:
         nqubits = int(round(lvl))
-    # changed hard cap 39 -> dynamic cap
+    # dynamic cap
     return max(16, min(nqubits, _current_peaked_max_cap()))
 
 # Peaked circuits
@@ -197,24 +192,23 @@ def build_peaked_challenge(
     gpu_id = _GPU_ID
     timeout_s = _GEN_TIMEOUT_S
 
+    used_seed = None
+    metadata = None
+    qasm = None
+
+    # Fast path: optional cached circuit pool
     try:
+        from qbittensor.validator.services.circuit_cache import GLOBAL_CIRCUIT_POOL  # type: ignore
         art = GLOBAL_CIRCUIT_POOL.get(nqubits)
         qasm = art.qasm
         used_seed = int(art.seed)
         rqc_depth = int(art.rqc_depth)
-        metadata = {
-            "seed": used_seed,
-            "qasm_filename": "",
-            "target_state": art.target_state,
-        }
+        metadata = {"seed": used_seed, "qasm_filename": "", "target_state": art.target_state}
     except Exception:
+        # Fallback: run the worker to generate a fresh circuit
         with tempfile.TemporaryDirectory(prefix="peaked_gen_") as tmpdir:
             outdir = Path(tmpdir)
             worker_path = (Path(__file__).resolve().parents[1] / "services" / "gen_worker.py").resolve()
-
-            used_seed = None
-            metadata = None
-            qasm = None
 
             for attempt in range(2):
                 attempt_seed = int(seed) if attempt == 0 else random.randrange(1 << 32)
@@ -341,50 +335,6 @@ def build_peaked_challenge(
     return syn, meta, target_state
 
 
-# Hidden Stabiliser circuits
-
-def build_hstab_challenge(
-    *, wallet: bt.wallet, difficulty: float
-) -> Tuple[ChallengeHStabCircuit, ChallengeMeta, str]:
-    """
-    Build an H-Stab circuit challenge.
-    """
-    nqubits: int = max(26, round(difficulty))
-    seed = random.randrange(1 << 30)
-
-    try:
-        generator = make_gen(seed)
-        circ: HStabCircuit = HStabCircuit.make_circuit(generator, nqubits)
-        qasm = circ.to_qasm()
-    finally:
-        _clear_memory()
-    flat_solution = _flatten_hstab_string(circ.stabilizers)
-    cid = hashlib.sha256(qasm.encode()).hexdigest()
-
-    syn = ChallengeHStabCircuit(
-        circuit_data=qasm,
-        challenge_id=cid,
-        difficulty_level=difficulty,
-        validator_hotkey=wallet.hotkey.ss58_address,
-        validator_signature=None,
-    )
-    meta = ChallengeMeta(
-        challenge_id=cid,
-        circuit_kind="hstab",
-        difficulty=difficulty,
-        validator_hotkey=wallet.hotkey.ss58_address,
-        entanglement_entropy=0.0,
-        nqubits=nqubits,
-        rqc_depth=0,
-    )
-    return syn, meta, flat_solution
-
-
-# Helper
-def _flatten_hstab_string(stabilizers: Iterable[stim.PauliString]) -> str:
-    """flatten an iterable of `stim.PauliString` -> single str"""
-    return "".join(map(str, stabilizers))
-
 def _params_from_difficulty(level: float) -> Tuple[int, int]:
     """
     Interpret `level` as desired number of qubits for peaked circuits.
@@ -405,3 +355,110 @@ def _convert_qubits_to_peaked_difficulty(nqubits: int) -> float:
     """
     n = max(2, int(nqubits))
     return max(0.0, (2 ** ((n - 12) / 10.0)) - 3.9)
+
+
+# Shors circuits
+def build_shors_challenge(*, wallet: bt.wallet, difficulty: float) -> tuple[ChallengeShorsCircuit, ChallengeMeta, str]:
+    """
+    Build a Shors circuit challenge using the protocol generator
+    """
+    # Map floating difficulty to L-level string
+    try:
+        d = float(difficulty)
+    except Exception:
+        d = 0.0
+    k = max(0, min(20, int(round(d))))
+    level_str = f"L{k}"
+
+    seed = int(time.time_ns() & 0xFFFFFFFF)
+
+    with tempfile.TemporaryDirectory(prefix="shors_gen_") as tmpdir:
+        outdir = Path(tmpdir)
+        gen = (Path(__file__).resolve().parents[2] / "validator" / "shor_circuit_creation" / "q_generator_shor_pro.py").resolve()
+
+        # Generate one variant with protocol-style meta
+        cmd = [sys.executable, str(gen), "--level", level_str, "--variants", "1", "--outdir", str(outdir), "--rng-seed", str(seed)]
+        rc, out, err = _run_cmd(cmd, timeout=int(_GEN_TIMEOUT_S))
+        if rc != 0:
+            bt.logging.error(f"[shors] generator rc={rc} stderr={(err or '')[:400]}")
+            raise RuntimeError("shors generator failed")
+
+        # Read QASM and meta
+        qasm_files = sorted(outdir.glob("*.qasm"))
+        if not qasm_files:
+            raise RuntimeError("no shors qasm emitted")
+        qasm = qasm_files[0].read_text()
+
+        meta_public_fp = outdir / "meta.json"
+        meta_private_fp = outdir / "meta_private.json"
+        meta_public = meta_public_fp.read_text() if meta_public_fp.exists() else None
+        meta_private = meta_private_fp.read_text() if meta_private_fp.exists() else None
+
+        # Deterministic CID over QASM
+        unsigned = {
+            "circuit_data": qasm,
+            "difficulty_level": float(difficulty),
+            "validator_hotkey": wallet.hotkey.ss58_address,
+            "level": level_str,
+        }
+        cid = canonical_hash(unsigned)
+
+        # Persist only the core verifier inputs (t, r, delta, k_list)
+        try:
+            from qbittensor.validator.utils.challenge_logger import save_shors_core
+            pub = json.loads(meta_public) if meta_public else {}
+            prv = json.loads(meta_private) if meta_private else {}
+
+            t_bits = int(pub.get("t", 0) or prv.get("t", 0) or 0)
+            secret = prv.get("secret", {}) if isinstance(prv, dict) else {}
+            r_value = int(secret.get("r", 0) or 0)
+            nonce_delta = int(secret.get("nonce_delta", 0) or 0)
+
+            variants = pub.get("variants", []) if isinstance(pub, dict) else []
+            k_list = []
+            try:
+                if variants:
+                    v0 = variants[0]
+                    k_list = list(v0.get("k_list", []))
+                if not k_list:
+                    k_list = list(secret.get("selection", {}).get("k_list_canonical", []))
+            except Exception:
+                k_list = []
+
+            save_shors_core(
+                challenge_id=cid,
+                t_bits=t_bits,
+                r_value=r_value,
+                nonce_delta=nonce_delta,
+                k_list=[int(x) for x in (k_list or [])],
+                meta_json=meta_public,
+            )
+        except Exception:
+            bt.logging.debug("[shors] failed to persist core meta", exc_info=True)
+
+        syn = ChallengeShorsCircuit(
+            circuit_data=qasm,
+            challenge_id=cid,
+            difficulty_level=float(difficulty),
+            validator_hotkey=wallet.hotkey.ss58_address,
+            validator_signature=None,
+        )
+        # Use t as nqubits proxy; no RQC depth here
+        try:
+            pub = json.loads(meta_public) if meta_public else {}
+            t_bits = int(pub.get("t", 0))
+        except Exception:
+            t_bits = 0
+
+        meta = ChallengeMeta(
+            challenge_id=cid,
+            circuit_kind="shors",
+            difficulty=float(difficulty),
+            validator_hotkey=wallet.hotkey.ss58_address,
+            entanglement_entropy=0.0,
+            nqubits=t_bits or 0,
+            rqc_depth=0,
+        )
+
+        # No canonical bitstring; verification is statistical - store empty
+        return syn, meta, ""

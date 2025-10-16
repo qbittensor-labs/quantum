@@ -24,6 +24,7 @@ class Paths:
     solved_root: Path
     solved_peaked: Path
     solved_hstab: Path
+    solved_shors: Path
 
     @classmethod
     def from_base(cls, base: Path) -> "Paths":
@@ -34,4 +35,5 @@ class Paths:
             solved_root=base / "solved_circuits",
             solved_peaked=base / "peaked_circuits" / "solved_circuits",
             solved_hstab=base / "hstab_circuits" / "solved_circuits",
+            solved_shors=base / "shors_circuits" / "solved_circuits",
         )

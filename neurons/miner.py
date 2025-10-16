@@ -6,7 +6,7 @@ from typing import Union
 import bittensor as bt
 from qbittensor.base.miner import BaseMinerNeuron
 from qbittensor.miner.miner import _solve_challenge_sync
-from qbittensor.protocol import ChallengePeakedCircuit, ChallengeHStabCircuit, _CircuitSynapseBase
+from qbittensor.protocol import ChallengePeakedCircuit, ChallengeShorsCircuit, _CircuitSynapseBase
 
 SYNC_INTERVAL_S = 300  # 5-minute metagraph sync, keeps logs tidy
 
@@ -41,7 +41,7 @@ class Miner(BaseMinerNeuron):
         """
         return {
             "peaked": self.config.difficulty_peaked, # float
-            "hstab":  self.config.difficulty_hstab, # int
+            "shors":  self.config.difficulty_shors, # level-like
         }
         
     # Default forward method to satisfy abstract class requirement
@@ -51,8 +51,8 @@ class Miner(BaseMinerNeuron):
         """
         if isinstance(synapse, ChallengePeakedCircuit):
             return await self.forward_peaked(synapse)
-        elif isinstance(synapse, ChallengeHStabCircuit):
-            return await self.forward_hstab(synapse)
+        elif isinstance(synapse, ChallengeShorsCircuit):
+            return await self.forward_shors(synapse)
         else:
             raise ValueError(f"Unknown synapse type: {type(synapse)}")
     
@@ -63,8 +63,8 @@ class Miner(BaseMinerNeuron):
         """
         if isinstance(synapse, ChallengePeakedCircuit):
             return await self.blacklist_peaked(synapse)
-        elif isinstance(synapse, ChallengeHStabCircuit):
-            return await self.blacklist_hstab(synapse)
+        elif isinstance(synapse, ChallengeShorsCircuit):
+            return await self.blacklist_shors(synapse)
         else:
             return True, f"Unknown synapse type: {type(synapse)}"
     
@@ -75,8 +75,8 @@ class Miner(BaseMinerNeuron):
         """
         if isinstance(synapse, ChallengePeakedCircuit):
             return await self.priority_peaked(synapse)
-        elif isinstance(synapse, ChallengeHStabCircuit):
-            return await self.priority_hstab(synapse)
+        elif isinstance(synapse, ChallengeShorsCircuit):
+            return await self.priority_shors(synapse)
         else:
             return 0.0
     
@@ -88,26 +88,22 @@ class Miner(BaseMinerNeuron):
         synapse.desired_difficulty = float(self.config.difficulty_peaked)
         
         return _solve_challenge_sync(synapse, wallet=self.wallet)
-    
-    # ChallengeHStabCircuit handler
-    async def forward_hstab(self, synapse: ChallengeHStabCircuit) -> ChallengeHStabCircuit:
-        bt.logging.info(f"H-Stab circuit received")
-        
-        # Set the desired difficulty before processing
-        synapse.desired_difficulty = float(self.config.difficulty_hstab)
-        
-        return _solve_challenge_sync(synapse, wallet=self.wallet)
 
+    # ChallengeShorsCircuit handler
+    async def forward_shors(self, synapse: ChallengeShorsCircuit) -> ChallengeShorsCircuit:
+        bt.logging.info(f"Shors circuit received")
+        synapse.desired_difficulty = float(self.config.difficulty_shors)
+        return _solve_challenge_sync(synapse, wallet=self.wallet)
+    
     # Blacklist for ChallengePeakedCircuit
     async def blacklist_peaked(self, synapse: ChallengePeakedCircuit) -> typing.Tuple[bool, str]:
         return await self._blacklist_common(synapse)
     
-    # Blacklist for ChallengeHStabCircuit
-    async def blacklist_hstab(self, synapse: ChallengeHStabCircuit) -> typing.Tuple[bool, str]:
+    async def blacklist_shors(self, synapse: ChallengeShorsCircuit) -> typing.Tuple[bool, str]:
         return await self._blacklist_common(synapse)
     
     # Common blacklist logic
-    async def _blacklist_common(self, synapse: Union[ChallengePeakedCircuit, ChallengeHStabCircuit]) -> typing.Tuple[bool, str]:
+    async def _blacklist_common(self, synapse: typing.Union[ChallengePeakedCircuit, ChallengeShorsCircuit]) -> typing.Tuple[bool, str]:
         """
         Determines whether an incoming request should be blacklisted
         """
@@ -151,12 +147,11 @@ class Miner(BaseMinerNeuron):
     async def priority_peaked(self, synapse: ChallengePeakedCircuit) -> float:
         return await self._priority_common(synapse)
     
-    # Priority for ChallengeHStabCircuit
-    async def priority_hstab(self, synapse: ChallengeHStabCircuit) -> float:
+    async def priority_shors(self, synapse: ChallengeShorsCircuit) -> float:
         return await self._priority_common(synapse)
     
     # Common priority logic
-    async def _priority_common(self, synapse: Union[ChallengePeakedCircuit, ChallengeHStabCircuit]) -> float:
+    async def _priority_common(self, synapse: ChallengePeakedCircuit) -> float:
         if synapse.dendrite is None or synapse.dendrite.hotkey is None:
             bt.logging.warning(
                 "Received a request without a dendrite or hotkey."
@@ -191,9 +186,9 @@ class Miner(BaseMinerNeuron):
             blacklist_fn=self.blacklist_peaked,
             priority_fn=self.priority_peaked,
         ).attach(
-            forward_fn=self.forward_hstab,
-            blacklist_fn=self.blacklist_hstab,
-            priority_fn=self.priority_hstab,
+            forward_fn=self.forward_shors,
+            blacklist_fn=self.blacklist_shors,
+            priority_fn=self.priority_shors,
         )
 
         bt.logging.info(f"Serving miner axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}")
@@ -206,7 +201,7 @@ class Miner(BaseMinerNeuron):
             f"block: {self.block} | step: {self.step} | uid: {self.uid} | "
         )
         bt.logging.info(
-            f"Miner is accepting both ChallengePeakedCircuit and ChallengeHStabCircuit synapses"
+            f"Miner is accepting ChallengePeakedCircuit and ChallengeShorsCircuit synapses"
         )
 
         # Main loop
@@ -242,10 +237,10 @@ if __name__ == "__main__":
         help="Desired difficulty (float) for ChallengePeakedCircuit",
     )
     parser.add_argument(
-        "--difficulty_hstab",
-        type=int,
-        default=26,
-        help="Desired difficulty (int) for ChallengeHStabCircuit",
+        "--difficulty_shors",
+        type=float,
+        default=0.0,
+        help="Desired difficulty (level-like) for ChallengeShorsCircuit",
     )
     config = bt.config(parser)
     

@@ -91,7 +91,7 @@ def test_scoring_uses_challenge_circuit_type(tmp_path):
     _create_challenges_table(db_path)
 
     _insert_challenge(db_path, "c_peaked", "peaked")
-    _insert_challenge(db_path, "c_hstab", "hstab")
+    _insert_challenge(db_path, "c_shors", "shors")
 
     _insert_solution(
         db_path,
@@ -104,24 +104,24 @@ def test_scoring_uses_challenge_circuit_type(tmp_path):
 
     _insert_solution(
         db_path,
-        challenge_id="c_hstab",
+        challenge_id="c_shors",
         miner_uid=2,
         miner_hotkey="hk2",
-        nqubits=40,
+        nqubits=12,
         correct=1,
     )
 
     # only peaked counts
     mgr.weight_peaked = 1.0
-    mgr.weight_hstab = 0.0
+    mgr.weight_shors = 0.0
     scores = mgr.calculate_decayed_scores(lookback_days=2)
     assert scores.get("hk1", 0.0) == 1.0  # miner hk1 has peaked credit via challenge type
-    assert scores.get("hk2", 0.0) == 0.0  # miner hk2 shouldn't get peaked credit (challenge is hstab)
+    assert scores.get("hk2", 0.0) == 0.0  # miner hk2 shouldn't get peaked credit (challenge is shors)
 
-    # only hstab counts
+    # only shors counts
     mgr.weight_peaked = 0.0
-    mgr.weight_hstab = 1.0
+    mgr.weight_shors = 1.0
     scores2 = mgr.calculate_decayed_scores(lookback_days=2)
-    assert scores2.get("hk1", 0.0) == 0.0  # miner hk1 shouldn't get hstab credit (challenge is peaked)
-    assert scores2.get("hk2", 0.0) == 1.0  # miner hk2 has hstab credit via challenge type
+    assert scores2.get("hk1", 0.0) == 0.0  # miner hk1 shouldn't get shors credit (challenge is peaked)
+    assert scores2.get("hk2", 0.0) == 1.0  # miner hk2 has shors credit via challenge type
 

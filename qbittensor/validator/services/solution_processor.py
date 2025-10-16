@@ -12,9 +12,22 @@ from pathlib import Path
 from typing import Optional
 
 import bittensor as bt
-from qbittensor.validator.utils.challenge_logger import _DB_PATH, log_solution
+from qbittensor.validator.utils.challenge_logger import (
+    _DB_PATH,
+    log_solution,
+    log_solution_with_correctness,
+)
+from qbittensor.validator.utils.challenge_logger import get_shors_core
 from qbittensor.validator.services.certificate_issuer import CertificateIssuer
 from qbittensor.validator.utils.uid_utils import as_int_uid
+
+# Import verification functions from the canonical Shors verifier
+from qbittensor.validator.shor_circuit_creation.q_verify_shor_pro import (
+    pack_bits_from_positions,
+    spacing_bins,
+    choose_radius,
+    nearest_center_int,
+)
 
 
 @dataclass(slots=True)
@@ -57,7 +70,23 @@ class SolutionProcessor:
         if expected_uid != uid:
             return False
 
-        is_correct = self._verify(sol.challenge_id, sol.solution_bitstring)
+        is_correct = False
+        # Shors circuits: verify statistically using counts + core params
+        if (
+            getattr(sol, "circuit_type", None) or ch_row.get("circuit_type")
+        ) == "shors":
+            try:
+                core = get_shors_core(sol.challenge_id) or {}
+                # Expect miner_solution to carry counts JSON or TXT lines; support minimal JSON dict
+                counts = self._parse_counts(sol.solution_bitstring)
+                is_correct = self._verify_shors(core, counts)
+            except Exception as e:
+                bt.logging.trace(
+                    f"[solution-proc][shors] verify failed: {e}", exc_info=True
+                )
+                is_correct = False
+        else:
+            is_correct = self._verify(sol.challenge_id, sol.solution_bitstring)
 
         ch_row = self._challenge_row(sol.challenge_id)
 
@@ -66,17 +95,15 @@ class SolutionProcessor:
             return ch_row[key] if (ch_row and key in ch_row.keys()) else default
 
         challenge_circuit_type = _col("circuit_type", "peaked")
-        if getattr(sol, "circuit_type", None) and sol.circuit_type != challenge_circuit_type:
+        if (
+            getattr(sol, "circuit_type", None)
+            and sol.circuit_type != challenge_circuit_type
+        ):
             bt.logging.trace(
                 f"[solution-proc] miner-reported circuit_type diff from challenges table"
             )
 
-        # Clamp recorded nqubits for hstab from >50 to 50
-        raw_nqubits = _col("nqubits", sol.nqubits or 0)
-        if (challenge_circuit_type or "").lower().startswith("hstab"):
-            capped_nqubits = min(50, int(raw_nqubits or 0))
-        else:
-            capped_nqubits = int(raw_nqubits or 0)
+        nqubits = _col("nqubits", sol.nqubits or 0)
 
         # issue certificate only after _col exists
         if is_correct:
@@ -87,7 +114,7 @@ class SolutionProcessor:
                     miner_hotkey=miner_hotkey,
                     circuit_type=challenge_circuit_type,
                     entanglement_entropy=0.0,
-                    nqubits=capped_nqubits,
+                    nqubits=nqubits,
                     rqc_depth=_col("rqc_depth", sol.rqc_depth or 0),
                 )
             except Exception as e:
@@ -96,7 +123,19 @@ class SolutionProcessor:
                 )
 
         try:
-            log_solution(
+            # Shors has no canonical bitstring; log with explicit correctness set by the verifier.
+            is_shors = (sol.circuit_type or challenge_circuit_type) == "shors"
+            log_fn = (
+                (
+                    lambda **kw: log_solution_with_correctness(
+                        correct=int(1 if is_correct else 0), **kw
+                    )
+                )
+                if is_shors
+                else log_solution
+            )
+
+            log_fn(
                 challenge_id=sol.challenge_id,
                 circuit_type=challenge_circuit_type,
                 validator_hotkey=_col("validator_hotkey", "<unknown>"),
@@ -105,7 +144,7 @@ class SolutionProcessor:
                 miner_solution=sol.solution_bitstring,
                 difficulty_level=_col("difficulty_level", sol.difficulty_level or 0.0),
                 entanglement_entropy=0.0,
-                nqubits=capped_nqubits,
+                nqubits=nqubits,
                 rqc_depth=_col("rqc_depth", sol.rqc_depth or 0),
                 time_received=time_sent,
             )
@@ -119,14 +158,6 @@ class SolutionProcessor:
     def highest_correct_difficulty(self, uid: int, circuit_type: str) -> float | None:
         uid = as_int_uid(uid)
         with sqlite3.connect(self._db_path, timeout=30.0) as conn:
-            try:
-                conn.execute("PRAGMA journal_mode=WAL;")
-                conn.execute("PRAGMA synchronous=NORMAL;")
-                conn.execute("PRAGMA temp_store=MEMORY;")
-                conn.execute("PRAGMA cache_size=10000;")
-                conn.execute("PRAGMA busy_timeout=30000;")
-            except Exception:
-                pass
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 """
@@ -175,23 +206,109 @@ class SolutionProcessor:
 
         ok = expected_solution == bitstring
         if not ok:
-            bt.logging.trace(
-                f"[solution-proc] invalid solution"
-            )
+            bt.logging.trace(f"[solution-proc] invalid solution")
         return ok
 
     def _challenge_row(self, cid: str) -> Optional[sqlite3.Row]:
         with sqlite3.connect(self._db_path, timeout=30.0) as conn:
-            try:
-                conn.execute("PRAGMA journal_mode=WAL;")
-                conn.execute("PRAGMA synchronous=NORMAL;")
-                conn.execute("PRAGMA temp_store=MEMORY;")
-                conn.execute("PRAGMA cache_size=10000;")
-                conn.execute("PRAGMA busy_timeout=30000;")
-            except Exception:
-                pass
             conn.row_factory = sqlite3.Row
             return conn.execute(
                 "SELECT * FROM challenges WHERE challenge_id = ? LIMIT 1",
                 (cid,),
             ).fetchone()
+
+    # shors helpers
+    def _parse_counts(self, payload: str) -> dict:
+        """Accepts a JSON object mapping bitstrings to counts or a TXT-like multi-line string
+        Returns dict[str,int] of bitstrings to counts.
+        """
+        try:
+            import json
+
+            obj = json.loads(payload)
+            if isinstance(obj, dict):
+                return {str(k).replace(" ", ""): int(v) for k, v in obj.items()}
+        except Exception:
+            pass
+        counts: dict[str, int] = {}
+        for line in (payload or "").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split()
+            if len(parts) == 1:
+                bits, cnt = parts[0], 1
+            else:
+                bits, cnt = parts[0], parts[1]
+            try:
+                counts[str(bits).replace(" ", "")] = int(cnt)
+            except Exception:
+                continue
+        return counts
+
+    def _verify_shors(self, core: dict, counts: dict) -> bool:
+        """Verify Shors using functions from q_verify_shor_pro (canonical verifier).
+        Core expects keys: t_bits, r_value, nonce_delta, k_list
+        Counts: dict of bitstrings -> counts
+        """
+        if not core or not counts:
+            return False
+        
+        t = int(core.get("t_bits") or 0)
+        r = int(core.get("r_value") or 0)
+        delta_t = int(core.get("nonce_delta") or 0)
+        k_list = list(core.get("k_list") or [])
+        
+        if not k_list or t <= 0 or r <= 0:
+            return False
+
+        # Convert counts dict to [(value_int, count)] sorted by count desc
+        items = []
+        for bits, c in counts.items():
+            try:
+                v = int(str(bits).replace(" ", ""), 2)
+                items.append((v, int(c)))
+            except Exception:
+                continue
+        if not items:
+            return False
+        items.sort(key=lambda kv: kv[1], reverse=True)
+
+        # Build positions and window parameters using canonical verifier functions
+        positions = sorted(int(k) for k in k_list)
+        W = len(positions)
+        if W <= 0 or W > t:
+            return False
+
+        mask = (1 << W) - 1
+        delta_w = pack_bits_from_positions(delta_t, positions) & mask
+        Delta = spacing_bins(W, r)
+        shots = sum(c for _, c in items)
+        Bw = choose_radius(Delta, shots, Bw_user=None, coverage_target=0.30)
+        
+        # Threshold calculation (matches q_verify_shor_pro baseline)
+        p0 = min(1.0, (2 * Bw + 1) / max(1.0, Delta))
+        import math
+        sigma = math.sqrt(max(0.0, min(1.0, p0)) * (1 - max(0.0, min(1.0, p0))) / max(1, shots))
+        thr = max(0.15, min(0.35, 3.0 * p0))
+        eps = max(0.005, 1.5 * sigma)
+
+        # Score mass within radius (with early exit)
+        good = 0
+        seen = 0
+        for s_raw, c in items:
+            sW = pack_bits_from_positions(s_raw, positions)
+            sW = (sW + delta_w) & mask
+            center = nearest_center_int(sW, W, r)
+            d = (sW - center) & mask
+            d = min(d, (mask + 1) - d)
+            if d <= Bw:
+                good += c
+            seen += c
+            potential = (good + (shots - seen)) / max(1, shots)
+            if potential + 1e-12 < (thr - eps):
+                break
+
+        mass = good / max(1, shots)
+        margin = (mass + eps) - thr
+        return margin >= 0.0

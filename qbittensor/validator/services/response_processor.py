@@ -15,6 +15,7 @@ from qbittensor.validator.utils.uid_utils import as_int_uid
 from qbittensor.validator.utils.challenge_utils import (
     _convert_peaked_difficulty_to_qubits,
 )
+from qbittensor.validator.utils.challenge_logger import get_shors_core
 
 RPC_DEADLINE = 10  # seconds
 _CUTOFF_TS = dt.datetime(2025, 8, 6, 12, 0, 0, tzinfo=timezone.utc) # legacy certs
@@ -79,7 +80,6 @@ def _service_one_uid(
     syn.solution_bitstring = None # hide the answer
     syn.attach_certificates(v.certificate_issuer.pop_for(miner_hotkey))
 
-    # blocking RPC
     try:
         resp_list: List[Any] = v.dendrite.query(
             axons=[axon],
@@ -101,9 +101,18 @@ def _service_one_uid(
 
     # certificates
     total = inserted = 0
-    for raw in resp.certificates:
+    if len(resp.certificates) > 50000:
+        bt.logging.trace(f"[cert] Miner sent {len(resp.certificates)} certificates, limiting to 50,000")
+    for raw in resp.certificates[:50000]:  # Limit to 50,000 certificates max
         total += 1
         try:
+            # Skip legacy hstab certificates gracefully
+            if not isinstance(raw, Certificate):
+                circuit_type = raw.get("circuit_type", "") if isinstance(raw, dict) else getattr(raw, "circuit_type", "")
+                if circuit_type == "hstab":
+                    bt.logging.debug(f"[cert] ignoring legacy hstab certificate from UID {uid}")
+                    continue
+            
             cert = raw if isinstance(raw, Certificate) else Certificate(**raw)
             cert_uid = as_int_uid(cert.miner_uid)
             if cert_uid != uid:
@@ -139,6 +148,7 @@ def _service_one_uid(
             current_hotkey_for_uid = v.metagraph.hotkeys[cert_uid]
             if log_certificate_as_solution(cert, cert_hkey or current_hotkey_for_uid):
                 inserted += 1
+                v.metrics_service.record_certificate_received(kind, uid, miner_hotkey, cert.nqubits)
 
         except IndexError:
             bt.logging.warning(
@@ -160,7 +170,13 @@ def _service_one_uid(
                 sol.circuit_type = kind
             except Exception:
                 pass
+
         try:
+            if sol.circuit_type == "shors":
+                try:
+                    _ = get_shors_core(sol.challenge_id)
+                except Exception:
+                    bt.logging.debug("[shors] no core row found yet", exc_info=True)
             if v._sol_proc.process(
                 uid=uid,
                 miner_hotkey=miner_hotkey,
@@ -169,17 +185,17 @@ def _service_one_uid(
             ):
                 stored += 1
                 # Record the solution received metric
-                v.metrics_service.record_solution_received(kind, uid, miner_hotkey)
+                v.metrics_service.record_solution_received(kind, uid, miner_hotkey, sol.nqubits)
         except Exception as e:
             bt.logging.error(f"[solution] processing failed for UID {uid}: {e}", exc_info=True)
 
     if stored:
         bt.logging.info(f"[solution] ✅ Processed solutions from UID {uid}")
 
-    desired = getattr(resp, "desired_difficulty", None)
+    desired = resp.desired_difficulty
     if desired is None:
         for sol in SolutionExtractor.extract(resp):
-            desired = getattr(sol, "desired_difficulty", None)
+            desired = sol.desired_difficulty
             if desired is not None:
                 break
     if desired is None:
@@ -188,11 +204,7 @@ def _service_one_uid(
     cfg = _select_diff_cfg(v, kind) # will raise if kind unknown
     current = float(cfg.get(uid))
 
-    if kind == "hstab":
-        cap = 50.0
-        new_diff = max(0.0, min(float(desired), cap))
-
-    elif kind == "peaked":
+    if kind == "peaked":
         MIN_Q = 16.0
         MAX_Q = 40.0
         STEP = 7.0
@@ -214,6 +226,13 @@ def _service_one_uid(
         new_q = max(MIN_Q, min(desired_val, cap))
         new_diff = new_q
 
+    elif kind == "shors":
+        # Clamp reasonably; shors difficulty is level-like
+        cap = 9.0
+        try:
+            new_diff = max(0.0, min(float(desired), cap))
+        except Exception:
+            new_diff = current
     else: # defensive: should never happen
         raise ValueError(f"Unhandled circuit kind {kind!r}")
     bt.logging.debug(
@@ -227,10 +246,12 @@ def _service_one_uid(
 
 def _select_diff_cfg(v, kind: str):
     """
-    Map 'peaked' and 'hstab'
+    Map 'peaked' and 'shors'
     """
     kind = (kind or "").lower()
     try:
-        return v._diff_cfg["hstab" if kind.startswith("h") else "peaked"]
+        if kind.startswith("s"):
+            return v._diff_cfg["shors"]
+        return v._diff_cfg["peaked"]
     except KeyError:
         raise ValueError(f"Unknown circuit kind {kind!r}")

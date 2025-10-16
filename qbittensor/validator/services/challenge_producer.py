@@ -1,5 +1,5 @@
 """
-ChallengeProducer - queues hstab and peaked challenges for miners.
+ChallengeProducer - queues peaked and shors challenges for miners.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import bittensor as bt
 from qbittensor.validator.config.difficulty_config import DifficultyConfig
 from qbittensor.validator.utils.challenge_utils import (
     build_peaked_challenge,
-    build_hstab_challenge,
+    build_shors_challenge,
 )
 from qbittensor.validator.utils.validator_meta import ChallengeMeta
 from qbittensor.validator.utils.challenge_utils import ValidatorOOMError
@@ -76,16 +76,16 @@ class ChallengeProducer:
         self._validator = validator
         self._diff_cfg = diff_cfg
         self._default_difficulty = default_difficulty
-        self._MAX_DIFFICULTY = {"hstab": 50.0}
+        self._MAX_DIFFICULTY = {"shors": 9.0}  # cap shors difficulty level
 
         # strategy
         self._strategies: Dict[str, _KindStrategy] = {
             "peaked": _KindStrategy(0.5, build_peaked_challenge),
-            "hstab": _KindStrategy(0.5, build_hstab_challenge),
+            "shors": _KindStrategy(0.5, build_shors_challenge),
         }
         self._weights_cache = [s.weight for s in self._strategies.values()]
 
-        # one peaked one hstab per UID
+        # one peaked one shors per UID
         self._pending_uid: int | None = None
         self._pending_kind: str | None = None
 
@@ -208,15 +208,15 @@ class ChallengeProducer:
                             bt.logging.error(f"[challenge-producer] GPU reset script execution failed: {e}")
 
                     if room_for_two:
-                        # hstab
-                        syn2, meta2, target2 = self._build_challenge_of_kind(uid, "hstab")
+                        # shors
+                        syn2, meta2, target2 = self._build_challenge_of_kind(uid, "shors")
                         self.queue.put_nowait(QItem(uid, syn2, meta2, target2, file_path=None))
                         bt.logging.trace(
                             f"[challenge-producer] queued {meta2.circuit_kind} for UID {uid}"
                         )
                     else:
                         self._pending_uid = uid
-                        self._pending_kind = "hstab"
+                        self._pending_kind = "shors"
             except Exception:
                 bt.logging.error("[challenge-producer] error", exc_info=True)
 
@@ -250,8 +250,12 @@ class ChallengeProducer:
         difficulty = dv
 
         cap = self._MAX_DIFFICULTY.get(kind)
-        if cap is not None and difficulty > cap: # caps hstab at 50
+        if cap is not None and difficulty > cap: # caps difficulty per-kind
             difficulty = cap
+
+        # TEMP: force shors level L0
+        if kind == "shors":
+            difficulty = 0.0
 
         syn, meta, target = strat.builder(
             wallet=self._wallet,

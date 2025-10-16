@@ -95,8 +95,8 @@ class ChallengePeakedCircuit(_CircuitSynapseBase):
     circuit_kind: Literal["peaked"] = "peaked"
 
 
-class ChallengeHStabCircuit(_CircuitSynapseBase):
+class ChallengeShorsCircuit(_CircuitSynapseBase):
     """
-    Hstabiliser circuit challenge.
+    Shors algorithm circuit challenge.
     """
-    circuit_kind: Literal["hstab"] = "hstab"
+    circuit_kind: Literal["shors"] = "shors"

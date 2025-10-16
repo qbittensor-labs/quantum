@@ -28,7 +28,7 @@ from qbittensor.validator.utils.registration_tracker import (
     check_hotkey_changed,
 )
 from qbittensor.validator.database.fixups import apply_fixups 
-from qbittensor.protocol import ChallengePeakedCircuit, ChallengeHStabCircuit
+from qbittensor.protocol import ChallengePeakedCircuit, ChallengeShorsCircuit
 
 try:
     import torch
@@ -69,12 +69,20 @@ def _bootstrap(v: _ValidatorLike) -> None:
 
     # Create config files if first startup
     import shutil
-    template = CFG_DIR / "difficulty_hstab.sample.json"
-    runtime  = CFG_DIR / "difficulty_hstab.json"
-
-    if not runtime.exists() and template.exists():
-        shutil.copy2(template, runtime)
-        bt.logging.info(f"[bootstrap] seeded {runtime.name} from template")
+    
+    # Setup peaked difficulty config
+    peaked_template = CFG_DIR / "difficulty_peaked.sample.json"
+    peaked_runtime  = CFG_DIR / "difficulty_peaked.json"
+    if not peaked_runtime.exists() and peaked_template.exists():
+        shutil.copy2(peaked_template, peaked_runtime)
+        bt.logging.info(f"[bootstrap] seeded {peaked_runtime.name} from template")
+    
+    # Setup shors difficulty config
+    shors_template = CFG_DIR / "difficulty_shors.sample.json"
+    shors_runtime  = CFG_DIR / "difficulty_shors.json"
+    if not shors_runtime.exists() and shors_template.exists():
+        shutil.copy2(shors_template, shors_runtime)
+        bt.logging.info(f"[bootstrap] seeded {shors_runtime.name} from template")
 
     v._in_flight   = set()
     if not hasattr(v, "_shutdown_event"):
@@ -110,8 +118,8 @@ def _bootstrap(v: _ValidatorLike) -> None:
             hotkey_lookup=lambda u: v.metagraph.hotkeys[u], clamp=False
         ),
 
-        "hstab": DifficultyConfig(
-            CFG_DIR / "difficulty_hstab.json", uid_list, 26.0, db_path=None,  # Skips max lookup
+        "shors": DifficultyConfig(
+            CFG_DIR / "difficulty_shors.json", uid_list, 0.0, db_path=None,
             hotkey_lookup=lambda u: v.metagraph.hotkeys[u], clamp=False
         ),
     }
@@ -130,7 +138,7 @@ def _bootstrap(v: _ValidatorLike) -> None:
         wallet=v.wallet,
         diff_cfg={
             "peaked": v._diff_cfg["peaked"],
-            "hstab": v._diff_cfg["hstab"],
+            "shors": v._diff_cfg["shors"],
         },
         uid_list=uid_list,
         validator=v,
@@ -396,27 +404,27 @@ def _initialize_miner_difficulty(v: _ValidatorLike, uid: int) -> None:
             except Exception as e:
                 bt.logging.debug(f"[onboard] peaked query failed for uid {uid}: {e}")
 
-            # Send empty hstab circuit challenge
-            hstab_syn = ChallengeHStabCircuit(
-                validator_hotkey=validator_hk,
-                circuit_data=None,  # No QASM (difficulty query)
-                difficulty_level=0.0
-            )
+            # Send empty shors circuit challenge
             try:
-                hstab_resp = d.query(ax, hstab_syn, timeout=4.0)
-                if hasattr(hstab_resp, "desired_difficulty") and hstab_resp.desired_difficulty is not None:
+                shors_syn = ChallengeShorsCircuit(
+                    validator_hotkey=validator_hk,
+                    circuit_data=None,
+                    difficulty_level=0.0,
+                )
+                shors_resp = d.query(ax, shors_syn, timeout=5.0)
+                if hasattr(shors_resp, "desired_difficulty") and shors_resp.desired_difficulty is not None:
                     try:
-                        fv = float(hstab_resp.desired_difficulty)
+                        fv = float(shors_resp.desired_difficulty)
                         if math.isfinite(fv) and fv >= 0.0:
-                            cfg = v._diff_cfg.get("hstab")
+                            cfg = v._diff_cfg.get("shors")
                             if cfg is not None:
                                 changed = cfg.set(uid, fv)
                                 if changed:
-                                    bt.logging.info(f"[onboard] set hstab difficulty for uid {uid} to {fv:.2f}")
+                                    bt.logging.info(f"[onboard] set shors difficulty for uid {uid} to {fv:.2f}")
                     except Exception as e:
-                        bt.logging.debug(f"[onboard] failed to set hstab for uid {uid}: {e}")
+                        bt.logging.debug(f"[onboard] failed to set shors for uid {uid}: {e}")
             except Exception as e:
-                bt.logging.debug(f"[onboard] hstab query failed for uid {uid}: {e}")
+                bt.logging.debug(f"[onboard] shors query failed for uid {uid}: {e}")
 
         finally:
             try:

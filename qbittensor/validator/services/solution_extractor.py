@@ -9,7 +9,7 @@ from typing import List
 import bittensor as bt
 from qbittensor.protocol import (
     ChallengePeakedCircuit,
-    ChallengeHStabCircuit,
+    ChallengeShorsCircuit,
 )
 
 from .solution_processor import Solution
@@ -44,7 +44,7 @@ class SolutionExtractor:
         if isinstance(resp,
         (
             ChallengePeakedCircuit,
-            ChallengeHStabCircuit,
+            ChallengeShorsCircuit,
         ),
     ):
             raw = resp.solution_bitstring or getattr(resp, "miner_solution", "") or ""

@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from qbittensor.validator.forward import forward, _initialize_miner_difficulty, _save_onboarded
-from qbittensor.protocol import ChallengePeakedCircuit, ChallengeHStabCircuit
+from qbittensor.protocol import ChallengePeakedCircuit, ChallengeShorsCircuit
 
 
 class _FakeMetagraph:
@@ -74,7 +74,7 @@ class _FakeValidatorForDifficulty:
         # Mock difficulty configs
         self._diff_cfg = {
             "peaked": _FakeDifficultyConfig(),
-            "hstab": _FakeDifficultyConfig()
+            "shors": _FakeDifficultyConfig()
         }
 
         # Mock onboarded set
@@ -96,8 +96,8 @@ def _make_mock_dendrite(responses=None):
     else:
         # Default successful responses
         peaked_resp = _make_mock_response(25.0)
-        hstab_resp = _make_mock_response(30.0)
-        dendrite.query.side_effect = [peaked_resp, hstab_resp]
+        shors_resp = _make_mock_response(5.0)
+        dendrite.query.side_effect = [peaked_resp, shors_resp]
 
     return dendrite
 
@@ -132,19 +132,19 @@ def test_initialize_miner_difficulty_success(mock_dendrite_factory, fake_validat
     assert peaked_syn.validator_hotkey == "validator_hotkey_123"
     assert peaked_syn.difficulty_level == 0.0
 
-    # Check hstab query
-    hstab_call = mock_dendrite.query.call_args_list[1]
-    hstab_syn = hstab_call[0][1]  # Second argument is the synapse
-    assert isinstance(hstab_syn, ChallengeHStabCircuit)
-    assert hstab_syn.circuit_data is None
-    assert hstab_syn.validator_hotkey == "validator_hotkey_123"
-    assert hstab_syn.difficulty_level == 0.0
+    # Check shors query
+    shors_call = mock_dendrite.query.call_args_list[1]
+    shors_syn = shors_call[0][1]  # Second argument is the synapse
+    assert isinstance(shors_syn, ChallengeShorsCircuit)
+    assert shors_syn.circuit_data is None
+    assert shors_syn.validator_hotkey == "validator_hotkey_123"
+    assert shors_syn.difficulty_level == 0.0
 
     # Verify difficulties were set
     assert len(fake_validator._diff_cfg["peaked"].set_calls) == 1
-    assert len(fake_validator._diff_cfg["hstab"].set_calls) == 1
+    assert len(fake_validator._diff_cfg["shors"].set_calls) == 1
     assert fake_validator._diff_cfg["peaked"].set_calls[0] == (0, 25.0)
-    assert fake_validator._diff_cfg["hstab"].set_calls[0] == (0, 30.0)
+    assert fake_validator._diff_cfg["shors"].set_calls[0] == (0, 5.0)
 
     # Verify miner was onboarded
     assert "miner_hotkey_456" in fake_validator._onboarded
@@ -167,7 +167,7 @@ def test_initialize_miner_difficulty_invalid_axon_ip(mock_dendrite_factory, fake
 
     # Verify no difficulties were set
     assert len(fake_validator._diff_cfg["peaked"].set_calls) == 0
-    assert len(fake_validator._diff_cfg["hstab"].set_calls) == 0
+    assert len(fake_validator._diff_cfg["shors"].set_calls) == 0
 
 
 @mock.patch('qbittensor.validator.forward.bt.dendrite')
@@ -184,27 +184,27 @@ def test_initialize_miner_difficulty_invalid_axon_port(mock_dendrite_factory, fa
 
     # Verify no difficulties were set
     assert len(fake_validator._diff_cfg["peaked"].set_calls) == 0
-    assert len(fake_validator._diff_cfg["hstab"].set_calls) == 0
+    assert len(fake_validator._diff_cfg["shors"].set_calls) == 0
 
 
 @mock.patch('qbittensor.validator.forward.bt.dendrite')
 def test_initialize_miner_difficulty_peaked_query_failure(mock_dendrite_factory, fake_validator):
-    """Test handling when peaked query fails but hstab succeeds"""
-    # Setup dendrite to fail peaked query, succeed hstab query
+    """Test handling when peaked query fails but shors succeeds"""
+    # Setup dendrite to fail peaked query, succeed shors query
     mock_dendrite = mock.Mock()
     mock_dendrite.query.side_effect = [
         Exception("Peaked query failed"),  # Peaked fails
-        _make_mock_response(30.0)         # Hstab succeeds
+        _make_mock_response(5.0)           # Shors succeeds
     ]
     mock_dendrite_factory.return_value = mock_dendrite
 
     # Call the function
     _initialize_miner_difficulty(fake_validator, uid=0)
 
-    # Verify only hstab difficulty was set
+    # Verify only shors difficulty was set
     assert len(fake_validator._diff_cfg["peaked"].set_calls) == 0
-    assert len(fake_validator._diff_cfg["hstab"].set_calls) == 1
-    assert fake_validator._diff_cfg["hstab"].set_calls[0] == (0, 30.0)
+    assert len(fake_validator._diff_cfg["shors"].set_calls) == 1
+    assert fake_validator._diff_cfg["shors"].set_calls[0] == (0, 5.0)
 
     # Verify miner was still onboarded
     assert "miner_hotkey_456" in fake_validator._onboarded
@@ -215,17 +215,17 @@ def test_initialize_miner_difficulty_none_desired_difficulty(mock_dendrite_facto
     """Test handling when miner responds with None desired_difficulty"""
     # Setup responses with None desired_difficulty
     peaked_resp = _make_mock_response(None)
-    hstab_resp = _make_mock_response(30.0)
-    mock_dendrite = _make_mock_dendrite([peaked_resp, hstab_resp])
+    shors_resp = _make_mock_response(5.0)
+    mock_dendrite = _make_mock_dendrite([peaked_resp, shors_resp])
     mock_dendrite_factory.return_value = mock_dendrite
 
     # Call the function
     _initialize_miner_difficulty(fake_validator, uid=0)
 
-    # Verify only hstab difficulty was set (peaked had None)
+    # Verify only shors difficulty was set (peaked had None)
     assert len(fake_validator._diff_cfg["peaked"].set_calls) == 0
-    assert len(fake_validator._diff_cfg["hstab"].set_calls) == 1
-    assert fake_validator._diff_cfg["hstab"].set_calls[0] == (0, 30.0)
+    assert len(fake_validator._diff_cfg["shors"].set_calls) == 1
+    assert fake_validator._diff_cfg["shors"].set_calls[0] == (0, 5.0)
 
 
 @mock.patch('qbittensor.validator.forward.bt.dendrite')
@@ -233,8 +233,8 @@ def test_initialize_miner_difficulty_invalid_desired_difficulty(mock_dendrite_fa
     """Test handling when miner responds with invalid desired_difficulty"""
     # Setup responses with invalid desired_difficulty
     peaked_resp = _make_mock_response(float('inf'))  # Invalid: infinity
-    hstab_resp = _make_mock_response(-5.0)           # Invalid: negative
-    mock_dendrite = _make_mock_dendrite([peaked_resp, hstab_resp])
+    shors_resp = _make_mock_response(-5.0)           # Invalid: negative
+    mock_dendrite = _make_mock_dendrite([peaked_resp, shors_resp])
     mock_dendrite_factory.return_value = mock_dendrite
 
     # Call the function
@@ -242,14 +242,14 @@ def test_initialize_miner_difficulty_invalid_desired_difficulty(mock_dendrite_fa
 
     # Verify no difficulties were set due to invalid values
     assert len(fake_validator._diff_cfg["peaked"].set_calls) == 0
-    assert len(fake_validator._diff_cfg["hstab"].set_calls) == 0
+    assert len(fake_validator._diff_cfg["shors"].set_calls) == 0
 
 
 @mock.patch('qbittensor.validator.forward.bt.dendrite')
 def test_initialize_miner_difficulty_missing_difficulty_config(mock_dendrite_factory, fake_validator):
     """Test handling when difficulty config is missing"""
-    # Remove hstab config
-    del fake_validator._diff_cfg["hstab"]
+    # Remove shors config
+    del fake_validator._diff_cfg["shors"]
 
     mock_dendrite = _make_mock_dendrite()
     mock_dendrite_factory.return_value = mock_dendrite
@@ -257,7 +257,7 @@ def test_initialize_miner_difficulty_missing_difficulty_config(mock_dendrite_fac
     # Call the function
     _initialize_miner_difficulty(fake_validator, uid=0)
 
-    # Verify only peaked difficulty was set (hstab config missing)
+    # Verify only peaked difficulty was set (shors config missing)
     assert len(fake_validator._diff_cfg["peaked"].set_calls) == 1
     assert fake_validator._diff_cfg["peaked"].set_calls[0] == (0, 25.0)
 
@@ -274,5 +274,5 @@ def test_initialize_miner_difficulty_dendrite_close_failure(mock_dendrite_factor
 
     # Verify the function completed successfully despite close failure
     assert len(fake_validator._diff_cfg["peaked"].set_calls) == 1
-    assert len(fake_validator._diff_cfg["hstab"].set_calls) == 1
+    assert len(fake_validator._diff_cfg["shors"].set_calls) == 1
     assert "miner_hotkey_456" in fake_validator._onboarded

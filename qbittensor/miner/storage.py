@@ -30,7 +30,7 @@ class Storage:  # pylint: disable=too-few-public-methods
 
     def _bootstrap(self) -> None:
         """Scan existing files so we survive restarts gracefully."""
-        for folder in (self.p.solved_root, self.p.solved_peaked, self.p.solved_hstab):
+        for folder in (self.p.solved_root, self.p.solved_peaked, self.p.solved_shors):
             for fp in folder.glob("*.json"):
                 try:
                     meta = json.loads(fp.read_text())
@@ -56,10 +56,10 @@ class Storage:  # pylint: disable=too-few-public-methods
     ) -> None:
         """Persist computed solution (peak bitstring or stabilizer string) to disk."""
 
-        if circuit_type == "hstab":
-            target_dir = self.p.solved_hstab
-        elif circuit_type == "peaked":
+        if circuit_type == "peaked":
             target_dir = self.p.solved_peaked
+        elif circuit_type == "shors":
+            target_dir = self.p.solved_shors
         else:
             target_dir = self.p.solved_root
 

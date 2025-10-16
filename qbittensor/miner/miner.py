@@ -11,20 +11,20 @@ import bittensor as bt
 
 from qbittensor.miner.services.circuit_solver import CircuitSolver
 from qbittensor.miner.services.synapse_assembler import SynapseAssembler
-from qbittensor.protocol import ChallengePeakedCircuit, ChallengeHStabCircuit, _CircuitSynapseBase
+from qbittensor.protocol import ChallengePeakedCircuit, ChallengeShorsCircuit, _CircuitSynapseBase
 from qbittensor.miner.services.certificate_verifier import CertificateVerifier
 from qbittensor.miner.services.solution_archiver import SolutionArchiver
 from qbittensor.miner.services.certificate_cleanup import CertificateCleanup
 
-CircuitSynapse = Union[ChallengePeakedCircuit, ChallengeHStabCircuit]
+CircuitSynapse = Union[ChallengePeakedCircuit, ChallengeShorsCircuit]
 
 # bootstrap singletons
 _BASE_DIR = Path(__file__).resolve().parent
 _CERT_DIR = _BASE_DIR / "certificates"
 _OLD_CERT_DIR = _BASE_DIR / "old_certificates"
 for subdir in ("solved_circuits", "unsolved_circuits", "peaked_circuits", "peaked_circuits/solved_circuits", 
-    "peaked_circuits/unsolved_circuits", "hstab_circuits", "hstab_circuits/solved_circuits",
-    "hstab_circuits/unsolved_circuits"):
+    "peaked_circuits/unsolved_circuits", "shors_circuits", "shors_circuits/solved_circuits",
+    "shors_circuits/unsolved_circuits"):
     (_BASE_DIR / subdir).mkdir(parents=True, exist_ok=True)
 
 _verifier = CertificateVerifier()
@@ -44,7 +44,6 @@ solution_archiver = SolutionArchiver(
     solved_dirs=[
         _BASE_DIR / "solved_circuits",
         _BASE_DIR / "peaked_circuits" / "solved_circuits",
-        _BASE_DIR / "hstab_circuits"  / "solved_circuits",
     ],
     cert_dir=_CERT_DIR,
     archive_dir=_ARCHIVE_DIR,
@@ -55,7 +54,7 @@ solution_archiver = SolutionArchiver(
 # Solver registry
 SOLVERS = {
     ChallengePeakedCircuit: _circuit_solver,
-    ChallengeHStabCircuit: _circuit_solver,
+    ChallengeShorsCircuit: _circuit_solver,
 }
 
 def _get_solver_for_synapse(syn: CircuitSynapse) -> CircuitSolver:
@@ -94,25 +93,23 @@ def _handle_peaked_challenge(syn: ChallengePeakedCircuit) -> ChallengePeakedCirc
     bt.logging.trace("Handling peaked circuit")
     return _handle_challenge(syn)
 
-def _handle_hstab_challenge(syn: ChallengeHStabCircuit) -> ChallengeHStabCircuit:
-    """handler for H-stabilizer circuits"""
-    bt.logging.trace("Handling H-stab circuit")
+def _handle_shors_challenge(syn: ChallengeShorsCircuit) -> ChallengeShorsCircuit:
+    """handler for shors circuits"""
+    bt.logging.trace("Handling Shors circuit")
     return _handle_challenge(syn)
-
 
 # Generic handler that works with any circuit synapse type
 def solve_challenge_sync(s: CircuitSynapse, *, wallet) -> CircuitSynapse:
     """Route to appropriate handler"""
     if isinstance(s, ChallengePeakedCircuit):
         return _handle_peaked_challenge(s)
-    elif isinstance(s, ChallengeHStabCircuit):
-        return _handle_hstab_challenge(s)
+    elif isinstance(s, ChallengeShorsCircuit):
+        return _handle_shors_challenge(s)
     else:
         bt.logging.warning(f"Unknown synapse type {type(s)}, using generic handler")
         return _handle_challenge(s)
 
 handle_peaked_circuit = lambda s, *, wallet: _handle_peaked_challenge(s)
-handle_hstab_circuit = lambda s, *, wallet: _handle_hstab_challenge(s)
 
 _solve_challenge_sync = solve_challenge_sync
 handle_challenge_circuits = solve_challenge_sync

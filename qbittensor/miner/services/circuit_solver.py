@@ -6,7 +6,7 @@ import bittensor as bt
 from qbittensor.miner.solver_worker import SolverWorker
 from qbittensor.protocol import _CircuitSynapseBase
 from qbittensor.miner.solvers.default_peaked_solver import DefaultPeakedSolver
-from qbittensor.miner.solvers.default_hstab_solver import DefaultHStabSolver
+from qbittensor.miner.solvers.default_shors_solver import DefaultShorSolver
 
 
 def _execute_solve_in_process(qasm: str, circuit_type: str, solvers: dict) -> str:
@@ -29,10 +29,10 @@ def _execute_solve_in_process(qasm: str, circuit_type: str, solvers: dict) -> st
 
 class CircuitSolver:
     def __init__(self, base_dir):
-        self._custom_peaked_solver, self._custom_hstab_solver = self._detect_custom()
+        self._custom_peaked_solver, self._custom_shors_solver = self._detect_custom()
         self._solvers = {
             'peaked': self._custom_peaked_solver or DefaultPeakedSolver(),
-            'hstab': self._custom_hstab_solver or DefaultHStabSolver()
+            'shors': self._custom_shors_solver or DefaultShorSolver(),
         }
         
         solve_fn_for_worker = functools.partial(_execute_solve_in_process, solvers=self._solvers)
@@ -40,10 +40,10 @@ class CircuitSolver:
         self._worker.start()
 
     def _detect_custom(self):
-        """Detect both custom peaked and hstab solvers."""
+        """Detect custom peaked and shors solvers if present"""
         solvers_dir = Path(__file__).parent.parent / "solvers"
         custom_peaked_solver = None
-        custom_hstab_solver = None
+        custom_shors_solver = None
         
         peaked_path = solvers_dir / "custom_peaked_solver.py"
         if peaked_path.exists():
@@ -57,21 +57,21 @@ class CircuitSolver:
                 bt.logging.error(f"Failed to load custom peaked solver: {e}")
         else:
             bt.logging.info("Using default peaked solver")
-        
-        hstab_path = solvers_dir / "custom_hstab_solver.py"
-        if hstab_path.exists():
+
+        shors_path = solvers_dir / "custom_shors_solver.py"
+        if shors_path.exists():
             try:
-                from qbittensor.miner.solvers.custom_hstab_solver import CustomHStabSolver
-                custom_hstab_solver = CustomHStabSolver()
-                bt.logging.info("Using custom hstab solver")
+                from qbittensor.miner.solvers.custom_shors_solver import CustomShorsSolver
+                custom_shors_solver = CustomShorsSolver()
+                bt.logging.info("Using custom shors solver")
             except ImportError:
-                bt.logging.info("Custom hstab solver file exists but failed to import, using default hstab solver")
+                bt.logging.info("Custom shors solver file exists but failed to import, using default shors solver")
             except Exception as e:
-                bt.logging.error(f"Failed to load custom hstab solver: {e}")
+                bt.logging.error(f"Failed to load custom shors solver: {e}")
         else:
-            bt.logging.info("Using default hstab solver")
-            
-        return custom_peaked_solver, custom_hstab_solver
+            bt.logging.info("Using default shors solver")
+
+        return custom_peaked_solver, custom_shors_solver
 
     def _solve(self, qasm: str, circuit_type: str = None) -> str:
         """
@@ -79,7 +79,7 @@ class CircuitSolver:
 
         Args:
             qasm: QASM string of the circuit
-            circuit_type: 'peaked' or 'hstab'
+            circuit_type: 'peaked' or 'shors'
 
         Returns:
             str: Solution string, or empty string if solving failed

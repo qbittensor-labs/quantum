@@ -22,8 +22,8 @@ class Certificate(BaseModel):
     miner_hotkey: str | None = None  # allow legacy certs
     circuit_type: str = Field(
         default="peaked",
-        pattern="^(peaked|hstab)$",
-        description="Quantum circuit type: 'peaked' or 'hstab'"
+        pattern="^(peaked|shors)$",
+        description="Quantum circuit type: 'peaked' or 'shors'"
     )
     entanglement_entropy: float
     nqubits: int

@@ -55,6 +55,17 @@ _CREATE_SOLUTIONS_SQL = """
  );
 """
 
+_CREATE_SHORS_SQL = """
+ CREATE TABLE IF NOT EXISTS shors_details (
+     challenge_id         TEXT PRIMARY KEY,
+     t_bits               INTEGER,
+     r_value              INTEGER,
+     nonce_delta          INTEGER,
+     k_list_json          TEXT,
+     meta_json            TEXT
+ );
+"""
+
 _EXTRA_COLUMNS = {
     "challenges": {"circuit_type": "TEXT", "miner_hotkey": "TEXT"},
     "solutions": {"circuit_type": "TEXT"},
@@ -78,8 +89,8 @@ def ensure_tables() -> None:
         cur = conn.cursor()
         cur.execute(_CREATE_CHALLENGES_SQL)
         cur.execute(_CREATE_SOLUTIONS_SQL)
+        cur.execute(_CREATE_SHORS_SQL)
         conn.commit()
-        _add_missing_columns(conn)
 
 
 ensure_tables()
@@ -211,7 +222,9 @@ def log_solution(
     db = DatabaseManager(_DB_PATH)
     db.connect()
     try:
-        correct = _is_correct(db, challenge_id, miner_solution)
+        # ovverride triggers shors verification
+        override = getattr(log_solution, "_correct_override", None)
+        correct = override if (override is not None) else _is_correct(db, challenge_id, miner_solution)
         db.execute_query(
             _INSERT_SOLUTION_SQL,
             (
@@ -234,6 +247,26 @@ def log_solution(
         db.close()
 
 
+def log_solution_with_correctness(
+    *,
+    correct: int | None,
+    **kwargs,
+) -> None:
+    """Logs a solution while forcing the correctness flag.
+
+    This preserves the same insert path but bypasses the default equality-based
+    correctness to use Shors statistical verification
+    """
+    try:
+        setattr(log_solution, "_correct_override", int(correct) if correct is not None else None)
+        log_solution(**kwargs)
+    finally:
+        try:
+            delattr(log_solution, "_correct_override")
+        except Exception:
+            pass
+
+
 def log_certificate_as_solution(cert: Certificate, miner_hotkey: str) -> bool:
     """
     Insert the certificate into solutions
@@ -243,14 +276,6 @@ def log_certificate_as_solution(cert: Certificate, miner_hotkey: str) -> bool:
 
     conn = sqlite3.connect(_DB_PATH, timeout=30.0)
     try:
-        try:
-            conn.execute("PRAGMA journal_mode=WAL;")
-            conn.execute("PRAGMA synchronous=NORMAL;")
-            conn.execute("PRAGMA temp_store=MEMORY;")
-            conn.execute("PRAGMA cache_size=10000;")
-            conn.execute("PRAGMA busy_timeout=30000;")
-        except Exception:
-            pass
         before = conn.total_changes  # snapshot
         conn.execute(
             _INSERT_CERT_AS_SOLUTION_SQL,
@@ -273,3 +298,50 @@ def log_certificate_as_solution(cert: Certificate, miner_hotkey: str) -> bool:
         return (conn.total_changes - before) == 1
     finally:
         conn.close()
+
+
+def save_shors_core(*, challenge_id: str, t_bits: int, r_value: int, nonce_delta: int, k_list: list[int], meta_json: str | None = None) -> None:
+    """Record only the core Shors verifier inputs (no private blob)"""
+    db = DatabaseManager(_DB_PATH)
+    db.connect()
+    try:
+        import json as _json
+        db.execute_query(
+            """
+            INSERT OR REPLACE INTO shors_details (challenge_id, t_bits, r_value, nonce_delta, k_list_json, meta_json)
+            VALUES (?, ?, ?, ?, ?, ?);
+            """,
+            (
+                challenge_id,
+                int(t_bits),
+                int(r_value),
+                int(nonce_delta),
+                _json.dumps([int(x) for x in (k_list or [])], separators=(",", ":")),
+                meta_json or None,
+            ),
+        )
+    finally:
+        db.close()
+
+
+def get_shors_core(challenge_id: str) -> dict | None:
+    """Return dict with t_bits, r_value, nonce_delta, k_list for Shors verification"""
+    import sqlite3, json as _json
+    with sqlite3.connect(_DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT t_bits, r_value, nonce_delta, k_list_json FROM shors_details WHERE challenge_id = ? LIMIT 1;",
+            (challenge_id,),
+        ).fetchone()
+        if not row:
+            return None
+        try:
+            k_list = _json.loads(row["k_list_json"]) if row["k_list_json"] else []
+        except Exception:
+            k_list = []
+        return {
+            "t_bits": int(row["t_bits"]) if row["t_bits"] is not None else 0,
+            "r_value": int(row["r_value"]) if row["r_value"] is not None else 0,
+            "nonce_delta": int(row["nonce_delta"]) if row["nonce_delta"] is not None else 0,
+            "k_list": [int(x) for x in (k_list or [])],
+        }

@@ -9,8 +9,6 @@ import numpy as np
 
 from qbittensor.validator.database.database_manager import DatabaseManager
 
-HSTAB_BASELINE = 26
-
 def size_function(
     nqubits: int,
     knee: int = 32,
@@ -43,6 +41,24 @@ def size_function(
     return knee_score * (exponential_base**exponent)
 
 
+def size_function_shors_level(level: float, exp: float = 2.0) -> float:
+    """
+    Shor size score
+
+    Scales polynomially as diff**exp,
+    where diff = max(1, round(level)).
+    """
+    try:
+        k = int(round(float(level)))
+    except Exception:
+        k = 0
+    diff = max(1, k)
+    try:
+        return float(diff) ** float(exp)
+    except Exception:
+        return float(diff)
+
+
 class ScoringManager:
     """
     Manages the scoring logic for miners based on their quantum solution submissions.
@@ -59,9 +75,9 @@ class ScoringManager:
         self.knee = 32  # Knee point qubits
         self.min_score = 0.15  # Min score
         self.half_life_hours = 72.0
-        self.weight_peaked = 0.8
-        self.weight_hstab = 0.2
-        self.hstab_exp = 2.0
+        self.weight_peaked = 0.4
+        self.weight_shors = 0.6
+        self.shors_exp = 2.0
         self.min_registration_age_hours = 6.0  # do not score miners younger than this threshold
 
         bt.logging.info("ScoringManager initialized")
@@ -168,16 +184,6 @@ class ScoringManager:
         normalized = entropy / Smax
         return max(0.0, min(1.0, normalized))
 
-    def _hstab_score(self, nqubits: int, is_correct: bool) -> float:
-        """
-        Score for an individual *hstab* solution.
-        nqubits^1.7
-        """
-        if not is_correct or nqubits is None or nqubits <= 0:
-            return 0.0
-        steps = max(1, nqubits - HSTAB_BASELINE + 1)
-        return float(steps) ** self.hstab_exp
-
     def calculate_combined_score(
         self, entropy: float, nqubits: int
     ) -> Tuple[float, float, float]:
@@ -215,7 +221,7 @@ class ScoringManager:
         current_time = datetime.now(timezone.utc)
         cutoff_time = current_time - timedelta(days=lookback_days)
         decay_const = math.log(2) / self.half_life_hours  # same half‑life
-        scores_raw = defaultdict(lambda: {"peaked": 0.0, "hstab": 0.0})
+        scores_raw = defaultdict(lambda: {"peaked": 0.0, "shors": 0.0})
 
         db = DatabaseManager(self.database_path)
         db.connect()
@@ -262,14 +268,14 @@ class ScoringManager:
                 (cutoff_time.isoformat(),),
             )
 
-            rows_hstab = db.fetch_all(
+            rows_shors = db.fetch_all(
                 """
-                SELECT s.miner_hotkey, s.miner_uid, s.nqubits,
+                SELECT s.miner_hotkey, s.miner_uid, s.nqubits, s.difficulty_level,
                        s.time_received, s.correct_solution
                 FROM   solutions s
                 JOIN   challenges c ON c.challenge_id = s.challenge_id
                 WHERE  s.time_received >= ?
-                AND    c.circuit_type  = 'hstab'
+                AND    c.circuit_type  = 'shors'
                 ORDER  BY s.time_received DESC
                 """,
                 (cutoff_time.isoformat(),),
@@ -304,11 +310,12 @@ class ScoringManager:
                 )
                 scores_raw[hk]["peaked"] += base * decay
 
-            # process hstab
-            for row in rows_hstab:
+            # process shors (use level from difficulty_level)
+            for row in rows_shors:
                 hk = (row["miner_hotkey"] or "").strip()
                 if not hk:
                     continue
+                level = row["difficulty_level"]
                 # Registration-age gating
                 if eligible_hotkeys is not None and hk not in eligible_hotkeys:
                     continue
@@ -328,21 +335,21 @@ class ScoringManager:
                 age_h = (current_time - ts).total_seconds() / 3600.0
                 decay = math.exp(-decay_const * age_h)
 
-                base = self._hstab_score(nqubits, is_correct)
-                scores_raw[hk]["hstab"] += base * decay
+                base = size_function_shors_level(level, exp=self.shors_exp)
+                scores_raw[hk]["shors"] += (base if is_correct else 0.0) * decay
 
         finally:
             db.close()
 
-        # 60 / 40 weighting
+        # Blend weighting across families (peaked/shors)
         eps = 1e-12  # avoid divide‑by‑zero
         max_peaked = max((p["peaked"] for p in scores_raw.values()), default=0.0) + eps
-        max_hstab = max((p["hstab"] for p in scores_raw.values()), default=0.0) + eps
+        max_shors = max((p["shors"] for p in scores_raw.values()), default=0.0) + eps
 
         combined = {
             hk: (
                 self.weight_peaked * (parts["peaked"] / max_peaked)
-                + self.weight_hstab * (parts["hstab"] / max_hstab)
+                + self.weight_shors * (parts["shors"] / max_shors)
             )
             for hk, parts in scores_raw.items()
         }
