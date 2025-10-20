@@ -107,7 +107,7 @@ class Validator(BaseValidatorNeuron):
 
         bt.logging.info("Validator starting (sync mode)")
 
-        self.metrics_service = MetricsService(validator_hotkey=self.wallet.hotkey.ss58_address, network=self.subtensor.network)
+        self.metrics_service = MetricsService(keypair=self.wallet.hotkey, network=self.subtensor.network)
 
         # Validator git repo update worker
         #start_updater(check_interval_minutes=5)
@@ -117,7 +117,7 @@ class Validator(BaseValidatorNeuron):
         try:
             while True:
                 try:
-                    self.metrics_service.record_heardbeat(qbt.__version__)
+                    self.metrics_service.record_heartbeat(qbt.__version__)
                     #bt.logging.info(f"step={self.step} uid={self.uid}")
                     self.metagraph.sync(subtensor=self.subtensor)
                     self.forward() # sync now

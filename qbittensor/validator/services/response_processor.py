@@ -169,7 +169,7 @@ def _service_one_uid(
             ):
                 stored += 1
                 # Record the solution received metric
-                v.metrics_service.record_solution_received(kind, uid, miner_hotkey)
+                v.metrics_service.record_solution_received(kind, uid, miner_hotkey, sol.nqubits)
         except Exception as e:
             bt.logging.error(f"[solution] processing failed for UID {uid}: {e}", exc_info=True)
 
