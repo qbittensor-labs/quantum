@@ -101,7 +101,9 @@ def _service_one_uid(
 
     # certificates
     total = inserted = 0
-    for raw in resp.certificates:
+    if len(resp.certificates) > 50000:
+        bt.logging.trace(f"[cert] Miner sent {len(resp.certificates)} certificates, limiting to 50,000")
+    for raw in resp.certificates[:50000]:  # Limit to 50,000 certificates max
         total += 1
         try:
             cert = raw if isinstance(raw, Certificate) else Certificate(**raw)
@@ -169,7 +171,7 @@ def _service_one_uid(
             ):
                 stored += 1
                 # Record the solution received metric
-                v.metrics_service.record_solution_received(kind, uid, miner_hotkey)
+                v.metrics_service.record_solution_received(kind, uid, miner_hotkey, sol.nqubits)
         except Exception as e:
             bt.logging.error(f"[solution] processing failed for UID {uid}: {e}", exc_info=True)
 

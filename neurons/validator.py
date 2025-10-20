@@ -1,6 +1,24 @@
 import os
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
+# Load environment variables from .env (for METRICS_API_URL, etc.)
+from dotenv import load_dotenv
+load_dotenv()
+
+# Explicitly disable legacy OpenTelemetry exporters to avoid duplicate metrics export
+os.environ["OTEL_SDK_DISABLED"] = "true"
+os.environ["OTEL_METRICS_EXPORTER"] = "none"
+os.environ["OTEL_TRACES_EXPORTER"] = "none"
+os.environ["OTEL_LOGS_EXPORTER"] = "none"
+for _var in (
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_HEADERS",
+    "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+    "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+):
+    os.environ.pop(_var, None)
+
 import logging
 logging.getLogger("torch.autograd").setLevel(logging.ERROR)
 
@@ -107,7 +125,7 @@ class Validator(BaseValidatorNeuron):
 
         bt.logging.info("Validator starting (sync mode)")
 
-        self.metrics_service = MetricsService(validator_hotkey=self.wallet.hotkey.ss58_address, network=self.subtensor.network)
+        self.metrics_service = MetricsService(keypair=self.wallet.hotkey, network=self.subtensor.network)
 
         # Validator git repo update worker
         #start_updater(check_interval_minutes=5)
@@ -117,7 +135,7 @@ class Validator(BaseValidatorNeuron):
         try:
             while True:
                 try:
-                    self.metrics_service.record_heardbeat(qbt.__version__)
+                    self.metrics_service.record_heartbeat(qbt.__version__)
                     #bt.logging.info(f"step={self.step} uid={self.uid}")
                     self.metagraph.sync(subtensor=self.subtensor)
                     self.forward() # sync now
