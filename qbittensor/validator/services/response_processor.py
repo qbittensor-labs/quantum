@@ -101,7 +101,9 @@ def _service_one_uid(
 
     # certificates
     total = inserted = 0
-    for raw in resp.certificates:
+    if len(resp.certificates) > 50000:
+        bt.logging.trace(f"[cert] Miner sent {len(resp.certificates)} certificates, limiting to 50,000")
+    for raw in resp.certificates[:50000]:  # Limit to 50,000 certificates max
         total += 1
         try:
             cert = raw if isinstance(raw, Certificate) else Certificate(**raw)
