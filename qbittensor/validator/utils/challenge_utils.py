@@ -22,6 +22,7 @@ from qbittensor.protocol import (
     ChallengePeakedCircuit,
     ChallengeShorsCircuit,
 )
+from qbittensor.common.compression import compress_circuit_data
 from qbittensor.validator.peaked_circuit_creation.quimb_cache_utils import (
     clear_all_quimb_caches,
 )
@@ -436,8 +437,11 @@ def build_shors_challenge(*, wallet: bt.wallet, difficulty: float) -> tuple[Chal
         except Exception:
             bt.logging.debug("[shors] failed to persist core meta", exc_info=True)
 
+        # Compress the QASM circuit data before sending to miners
+        compressed_qasm = compress_circuit_data(qasm)
+
         syn = ChallengeShorsCircuit(
-            circuit_data=qasm,
+            circuit_data=compressed_qasm,
             challenge_id=cid,
             difficulty_level=float(difficulty),
             validator_hotkey=wallet.hotkey.ss58_address,

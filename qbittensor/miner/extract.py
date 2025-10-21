@@ -11,6 +11,7 @@ from typing import Optional
 
 import bittensor as bt
 from qbittensor.protocol import _CircuitSynapseBase
+from qbittensor.common.compression import decompress_circuit_data
 
 __all__ = ["cid_from_filename", "qasm_from_file", "qasm_from_synapse"]
 
@@ -57,6 +58,10 @@ def qasm_from_synapse(syn: _CircuitSynapseBase) -> Optional[str]:
     """Extract QASM from "circuit_data" of a circuit synapse."""
     payload = syn.circuit_data or ""
 
+    # Decompress if Shors
+    if isinstance(payload, str):
+        payload = decompress_circuit_data(payload)
+    
     # Raw string
     if isinstance(payload, str):
         if _is_raw_qasm(payload):
