@@ -46,6 +46,14 @@ class SolutionProcessor:
         Checks the bitstring against the canonical answer in the DB. Logs the attempt via
         `log_solution()`.
         """
+        # Skip if a correct solution for this challenge is already recorded
+        with sqlite3.connect(self._db_path, timeout=30.0) as _conn:
+            if _conn.execute(
+                "SELECT 1 FROM solutions WHERE challenge_id = ? LIMIT 1;",
+                (sol.challenge_id,),
+            ).fetchone():
+                return False
+
         ch_row = self._challenge_row(sol.challenge_id)
         if ch_row is None:
             bt.logging.trace(
