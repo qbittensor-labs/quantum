@@ -13,6 +13,7 @@ from typing import Any, Dict, List, NamedTuple, Tuple
 import math
 
 import bittensor as bt
+import qbittensor as qbt
 from qbittensor.validator.config.difficulty_config import DifficultyConfig
 from qbittensor.validator.utils.challenge_utils import (
     build_peaked_challenge,
@@ -214,6 +215,12 @@ class ChallengeProducer:
                         bt.logging.trace(
                             f"[challenge-producer] queued {meta2.circuit_kind} for UID {uid}"
                         )
+                        # Heartbeat after both circuits for this UID have been queued
+                        try:
+                            self._validator.metrics_service.record_heartbeat(qbt.__version__)
+                            bt.logging.info("heartbeat recorded")
+                        except Exception:
+                            bt.logging.debug("[challenge-producer] heartbeat failed", exc_info=True)
                     else:
                         self._pending_uid = uid
                         self._pending_kind = "hstab"
