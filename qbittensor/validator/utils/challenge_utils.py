@@ -5,6 +5,7 @@ Utilities for generating circuits
 from __future__ import annotations
 
 import random
+import secrets
 import time
 import hashlib
 from typing import Iterable, Tuple
@@ -180,7 +181,7 @@ def build_peaked_challenge(
     """
     Build a peaked circuit challenge
     """
-    seed = time.time_ns() % (2**32)
+    seed = secrets.randbits(128)
 
     nqubits = _convert_peaked_difficulty_to_qubits(difficulty)
     level = _convert_qubits_to_peaked_difficulty(nqubits)
@@ -317,7 +318,6 @@ def build_peaked_challenge(
                 raise RuntimeError("generation worker failed")
 
     unsigned = {
-        "seed": int(metadata.get("seed", used_seed)),
         "circuit_data": qasm,
         "difficulty_level": float(nqubits),
         "validator_hotkey": wallet.hotkey.ss58_address,
