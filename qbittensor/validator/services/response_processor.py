@@ -141,6 +141,7 @@ def _service_one_uid(
             current_hotkey_for_uid = v.metagraph.hotkeys[cert_uid]
             if log_certificate_as_solution(cert, cert_hkey or current_hotkey_for_uid):
                 inserted += 1
+                v.metrics_service.record_certificate_received(kind, uid, miner_hotkey, cert.nqubits)
 
         except IndexError:
             bt.logging.warning(

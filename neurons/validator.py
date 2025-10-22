@@ -30,7 +30,6 @@ import signal
 import sys
 from pathlib import Path
 
-import qbittensor as qbt
 from qbittensor.base.validator import BaseValidatorNeuron
 from qbittensor.validator.forward import forward, shutdown
 from qbittensor.validator.services.metrics import MetricsService
@@ -135,7 +134,6 @@ class Validator(BaseValidatorNeuron):
         try:
             while True:
                 try:
-                    self.metrics_service.record_heartbeat(qbt.__version__)
                     #bt.logging.info(f"step={self.step} uid={self.uid}")
                     self.metagraph.sync(subtensor=self.subtensor)
                     self.forward() # sync now
